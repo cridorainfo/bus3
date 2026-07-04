@@ -1,0 +1,79 @@
+// Seeds one demo route + device identity so the system is runnable/demoable out of the box.
+// Real deployments replace this with data synced down from the cloud (Phase 2) and a real
+// one-time device provisioning step (spec 3.5).
+
+const db = require('./db');
+
+function seed() {
+  const busId = process.env.HUB_BUS_ID || 'HUB-DEV-01';
+
+  const existingDevice = db.prepare('SELECT bus_id FROM device_config WHERE bus_id = ?').get(busId);
+  if (!existingDevice) {
+    db.prepare(`
+      INSERT INTO device_config (bus_id, reg_number, route_assigned, hardware_version, esp32_vid, esp32_pid, last_sync_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL)
+    `).run(busId, process.env.HUB_REG_NUMBER || 'KL07AX1234', 'R1', 'v1', '10C4', 'EA60');
+  }
+
+  const existingRoute = db.prepare('SELECT route_id FROM routes WHERE route_id = ?').get('R1');
+  if (existingRoute) return; // already seeded
+
+  db.prepare('INSERT INTO routes (route_id, name, name_ml, tier) VALUES (?, ?, ?, ?)')
+    .run('R1', 'Kochi - Thrissur Express', 'കൊച്ചി - തൃശ്ശൂർ എക്സ്പ്രസ്', 'urban_standard');
+
+  const stops = [
+    ['S1', 'വൈറ്റില', 'Vyttila', 0],
+    ['S2', 'അലുവ', 'Aluva', 1],
+    ['S3', 'അങ്കമാലി', 'Angamaly', 2],
+    ['S4', 'ചാലക്കുടി', 'Chalakudy', 3],
+    ['S5', 'ഗുരുവായൂർ', 'Guruvayur', 4],
+    ['S6', 'തൃശ്ശൂർ', 'Thrissur', 5],
+  ];
+
+  // Stops are global (route_stops links them to a route) — S1..S6 are just created under R1
+  // here since this is the only route in a fresh install, but any of them could later be
+  // linked into a second route via the Admin's stop search instead of being duplicated.
+  const insertStop = db.prepare(`
+    INSERT INTO stops (stop_id, route_id, name_ml, name_en, sequence_no, ads_enabled, announcement_template)
+    VALUES (?, 'R1', ?, ?, ?, ?, 'chime,filler,stop_name,outro')
+  `);
+  const insertRouteStop = db.prepare('INSERT INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)');
+  for (const [id, ml, en, seq] of stops) {
+    // Give the 3rd stop the ads toggle switched on, to demo the stop_name -> stop_name_ad swap.
+    const adsEnabled = seq === 2 ? 1 : 0;
+    insertStop.run(id, ml, en, seq, adsEnabled);
+    insertRouteStop.run('R1', id, seq);
+  }
+
+  const insertContent = db.prepare(`
+    INSERT INTO content_items (content_id, type, file_path, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id, active_from, active_to)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  insertContent.run('chime-default', 'chime', '/audio/chime.wav', 1.5, null, null, null, null, null, null, null);
+  insertContent.run('filler-default', 'filler', '/audio/filler.wav', 1.2, null, null, null, null, null, null, null);
+  insertContent.run('outro-default', 'outro', '/audio/outro.wav', 1.0, null, null, null, null, null, null, null);
+
+  for (const [id, , en, seq] of stops) {
+    insertContent.run(`stopname-${id}`, 'stop_name', `/audio/stopname-${id}.wav`, 2.0, null, null, null, 'R1', id, null, null);
+  }
+
+  // Demo of the ads swap: S3 has ads_enabled=1 above, so this clip (stop name + sponsor line,
+  // recorded together) plays instead of the plain stopname-S3 clip — see composeAnnouncement.
+  insertContent.run('stopname-ad-S3', 'stop_name_ad', '/audio/stopname-ad-S3.wav', 3.0, 'urban_standard', 'demo-advertiser', 'demo-campaign-audio', 'R1', 'S3', null, null);
+
+  insertContent.run('ad-video-demo-1', 'ad_video', '/media/ad-demo-1.mp4', 15, 'urban_standard', 'demo-advertiser', 'demo-campaign-video', 'R1', null, null, null);
+  insertContent.run('ad-video-demo-2', 'ad_video', '/media/ad-demo-2.mp4', 15, 'urban_standard', 'demo-advertiser-2', 'demo-campaign-video-2', 'R1', null, null, null);
+  insertContent.run('house-psa-1', 'ad_video', '/media/house-psa.mp4', 10, null, null, null, 'R1', null, null, null);
+
+  const today = new Date().toISOString().slice(0, 10);
+  db.prepare('INSERT OR IGNORE INTO daily_pin (bus_id, date, pin) VALUES (?, ?, ?)').run(busId, today, '1234');
+  db.prepare(`INSERT INTO roster (name, role, bus_id, assigned_date) VALUES (?, ?, ?, ?)`)
+    .run('Demo Driver', 'driver', busId, today);
+  db.prepare(`INSERT INTO roster (name, role, bus_id, assigned_date) VALUES (?, ?, ?, ?)`)
+    .run('Demo Conductor', 'conductor', busId, today);
+
+  console.log(`[seed] Seeded demo route R1 (6 stops) and device ${busId}`);
+}
+
+module.exports = seed;

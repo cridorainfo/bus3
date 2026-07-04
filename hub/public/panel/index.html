@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>AdKerala Control Panel</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header id="identity-banner">
+    <div id="reg-number">–</div>
+    <div id="route-name">–</div>
+  </header>
+
+  <main id="screens">
+    <section id="screen-trip" class="screen active">
+      <div class="status-row">
+        <span class="status-pill" id="esp32-pill">ESP32 …</span>
+        <span class="status-pill" id="net-pill">Internet …</span>
+      </div>
+      <div class="current-stop-box">
+        <div class="label">Current stop</div>
+        <div id="current-stop-name">–</div>
+      </div>
+      <div class="label">Direction</div>
+      <div id="direction-toggle" class="segmented">
+        <button class="segment active" data-direction="going">Going</button>
+        <button class="segment" data-direction="return">Coming Back</button>
+      </div>
+      <button id="btn-start-trip" class="big-btn green">Start Trip</button>
+      <button id="btn-end-trip" class="big-btn red">End Trip</button>
+      <div class="hint" id="trip-hint"></div>
+    </section>
+
+    <section id="screen-correction" class="screen">
+      <div class="label">Jump to stop</div>
+      <div id="stop-list"></div>
+    </section>
+
+    <section id="screen-mute" class="screen">
+      <div class="label">Audio</div>
+      <button id="btn-mute-toggle" class="big-btn">Mute</button>
+    </section>
+
+    <section id="screen-issue" class="screen">
+      <div class="label">Report an issue</div>
+      <textarea id="issue-text" rows="4" placeholder="What's wrong?"></textarea>
+      <button id="btn-submit-issue" class="big-btn green">Submit</button>
+      <div class="hint" id="issue-hint"></div>
+    </section>
+  </main>
+
+  <nav id="tab-bar">
+    <button class="tab active" data-screen="screen-trip">Trip</button>
+    <button class="tab" data-screen="screen-correction">Correct</button>
+    <button class="tab" data-screen="screen-mute">Mute</button>
+    <button class="tab" data-screen="screen-issue">Report</button>
+  </nav>
+
+  <div id="pin-overlay" class="overlay hidden">
+    <div class="pin-box">
+      <div class="label">Enter PIN</div>
+      <div id="pin-display">— — — —</div>
+      <div class="keypad">
+        <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+        <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+        <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+        <button data-key="clear">C</button><button data-key="0">0</button><button data-key="back">⌫</button>
+      </div>
+      <div id="pin-error" class="pin-error"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

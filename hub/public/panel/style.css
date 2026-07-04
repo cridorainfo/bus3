@@ -1,0 +1,242 @@
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  height: 100%;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  background: #101018;
+  color: #f0f0f5;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#identity-banner {
+  background: #1b1b2a;
+  padding: 18px 16px;
+  text-align: center;
+  border-bottom: 3px solid #ffb300;
+}
+
+#reg-number {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+#route-name {
+  font-size: 16px;
+  color: #9a9ab0;
+  margin-top: 2px;
+}
+
+#screens {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 16px 100px;
+}
+
+.screen { display: none; }
+.screen.active { display: block; }
+
+.status-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.status-pill {
+  flex: 1;
+  text-align: center;
+  padding: 10px;
+  border-radius: 10px;
+  background: #23233a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.status-pill.ok { background: #1f4d2e; color: #7ee89a; }
+.status-pill.bad { background: #4d1f1f; color: #ff9a9a; }
+
+.current-stop-box {
+  background: #1b1b2a;
+  border-radius: 14px;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.current-stop-box .label, #stop-list ~ .label, #screen-mute .label, #screen-issue .label {
+  font-size: 13px;
+  color: #9a9ab0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+#current-stop-name {
+  font-size: 32px;
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.segmented {
+  display: flex;
+  background: #1b1b2a;
+  border-radius: 14px;
+  padding: 6px;
+  margin-bottom: 20px;
+  gap: 6px;
+}
+
+.segment {
+  flex: 1;
+  padding: 14px 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #9a9ab0;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.segment.active { background: #ffb300; color: #101018; }
+
+.segmented.locked .segment { opacity: 0.6; }
+
+.big-btn {
+  display: block;
+  width: 100%;
+  padding: 26px;
+  font-size: 24px;
+  font-weight: 700;
+  border: none;
+  border-radius: 16px;
+  margin-bottom: 16px;
+  color: #fff;
+  background: #2b2b40;
+}
+
+.big-btn.green { background: #2e7d4f; }
+.big-btn.red { background: #a13a3a; }
+.big-btn:active { transform: scale(0.98); }
+
+.hint {
+  text-align: center;
+  color: #9a9ab0;
+  font-size: 14px;
+  min-height: 20px;
+}
+
+#stop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.stop-row {
+  padding: 18px;
+  background: #1b1b2a;
+  border-radius: 12px;
+  font-size: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stop-row.current { border: 2px solid #ffb300; }
+
+.stop-row button {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: none;
+  background: #ffb300;
+  color: #101018;
+  font-weight: 700;
+}
+
+textarea {
+  width: 100%;
+  margin-top: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  border: none;
+  background: #1b1b2a;
+  color: #f0f0f5;
+  font-size: 16px;
+  resize: vertical;
+}
+
+#tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  background: #16161f;
+  border-top: 1px solid #2a2a3a;
+}
+
+.tab {
+  flex: 1;
+  padding: 16px 0;
+  background: none;
+  border: none;
+  color: #9a9ab0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tab.active { color: #ffb300; }
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.overlay.hidden { display: none; }
+
+.pin-box {
+  background: #1b1b2a;
+  border-radius: 20px;
+  padding: 24px;
+  width: 90%;
+  max-width: 340px;
+  text-align: center;
+}
+
+#pin-display {
+  font-size: 36px;
+  letter-spacing: 14px;
+  margin: 16px 0;
+}
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.keypad button {
+  padding: 20px 0;
+  font-size: 22px;
+  border-radius: 12px;
+  border: none;
+  background: #2b2b40;
+  color: #fff;
+  font-weight: 700;
+}
+
+.pin-error {
+  color: #ff9a9a;
+  min-height: 20px;
+  margin-top: 10px;
+  font-size: 14px;
+}

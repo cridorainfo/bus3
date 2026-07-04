@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "adkerala-hub",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["hub/src/server.js"],
+      "port": 3000
+    },
+    {
+      "name": "adkerala-cloud",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["cloud/src/server.js"],
+      "port": 4000
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AdKerala Admin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">Ad</span>Kerala <span class="brand-sub">Admin</span></div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="buses">Buses</button>
+      <button class="tab" data-tab="routes">Routes</button>
+      <button class="tab" data-tab="content">Content</button>
+    </nav>
+    <div id="lang-toggle" class="segmented segmented-sm">
+      <button class="segment active" data-lang="en">EN</button>
+      <button class="segment" data-lang="ml">മല</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- ===================== BUSES ===================== -->
+    <section id="tab-buses" class="tab-panel active">
+      <div class="panel-head">
+        <h1>Buses</h1>
+        <p class="subtitle">Register a bus, then assign it a route. Live status updates while the bus's Hub is online.</p>
+      </div>
+
+      <form id="form-add-bus" class="card form-inline">
+        <div class="field">
+          <label>Registration number</label>
+          <input type="text" id="bus-reg" placeholder="KL07AX1234" required />
+        </div>
+        <div class="field">
+          <label>Tier</label>
+          <select id="bus-tier">
+            <option value="rural">Rural</option>
+            <option value="urban_standard">Urban standard</option>
+            <option value="urban_women_premium">Urban women-premium</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Hardware version</label>
+          <input type="text" id="bus-hw" placeholder="v1" />
+        </div>
+        <button type="submit" class="btn btn-primary">Add bus</button>
+      </form>
+
+      <div id="bus-list" class="stack"></div>
+    </section>
+
+    <!-- ===================== ROUTES ===================== -->
+    <section id="tab-routes" class="tab-panel">
+      <div class="panel-head">
+        <h1>Routes</h1>
+        <p class="subtitle">A route is a stop list any number of buses can share. Editing stops updates every bus on that route live.</p>
+      </div>
+
+      <form id="form-add-route" class="card form-inline">
+        <div class="field">
+          <label>Route name (English)</label>
+          <input type="text" id="route-name" placeholder="Kochi - Thrissur Express" required />
+        </div>
+        <div class="field">
+          <label>Route name (Malayalam)</label>
+          <input type="text" id="route-name-ml" placeholder="കൊച്ചി - തൃശ്ശൂർ എക്സ്പ്രസ്" />
+        </div>
+        <div class="field">
+          <label>Tier</label>
+          <select id="route-tier">
+            <option value="rural">Rural</option>
+            <option value="urban_standard">Urban standard</option>
+            <option value="urban_women_premium">Urban women-premium</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Add route</button>
+      </form>
+
+      <div id="route-list" class="stack"></div>
+    </section>
+
+    <!-- ===================== CONTENT ===================== -->
+    <section id="tab-content" class="tab-panel">
+      <div class="panel-head">
+        <h1>Content Library</h1>
+        <p class="subtitle">Ads and audio segments. Global segments (chime/outro) ship to every bus; route/stop-scoped items ship only where assigned.</p>
+      </div>
+
+      <form id="form-add-content" class="card form-inline" enctype="multipart/form-data">
+        <div class="field">
+          <label>Type</label>
+          <select id="content-type">
+            <option value="ad_video">Ad video</option>
+            <option value="ad_banner">Ad banner</option>
+            <option value="chime">Chime (common, every announcement)</option>
+            <option value="filler">Filler phrase (common, every announcement)</option>
+            <option value="stop_name">Stop name (plain)</option>
+            <option value="stop_name_ad">Stop name (with ad — swaps in when toggled on)</option>
+            <option value="outro">Outro</option>
+            <option value="music">Music</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Route (optional = global; only for ad video/banner)</label>
+          <select id="content-route"><option value="">— Global —</option></select>
+        </div>
+        <div class="field stop-picker-field" id="content-stop-field" style="display:none">
+          <label>Stop</label>
+          <input type="text" id="content-stop-search" placeholder="Search stops…" autocomplete="off" />
+          <input type="hidden" id="content-stop-id" />
+          <div id="content-stop-results" class="search-results"></div>
+          <div id="content-stop-picked" class="picked-chip" style="display:none"></div>
+        </div>
+        <div class="field">
+          <label>Tier</label>
+          <select id="content-tier">
+            <option value="">Any</option>
+            <option value="rural">Rural</option>
+            <option value="urban_standard">Urban standard</option>
+            <option value="urban_women_premium">Urban women-premium</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>File</label>
+          <input type="file" id="content-file" required />
+        </div>
+        <button type="submit" class="btn btn-primary">Upload</button>
+      </form>
+      <div id="content-upload-hint" class="hint"></div>
+
+      <div id="content-list" class="stack"></div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

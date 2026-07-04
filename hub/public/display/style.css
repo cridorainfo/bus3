@@ -1,0 +1,113 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #0a0a0f;
+  color: #f5f5f5;
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+#ad-area {
+  position: relative;
+  width: 100%;
+  height: 82%; /* leaves the bottom strip for route progress, per spec Section 5 */
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#ad-video, #ad-banner {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+}
+
+#idle-message {
+  font-size: 64px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: #3a3f52;
+}
+
+#progress-strip {
+  height: 18%;
+  width: 100%;
+  background: linear-gradient(#14141c, #0d0d13);
+  border-top: 3px solid #262638;
+  display: flex;
+  align-items: center;
+  padding: 0 40px;
+  overflow: hidden;
+}
+
+#stops-track {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  position: relative;
+}
+
+.stop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  position: relative;
+  z-index: 1;
+}
+
+.stop::before {
+  content: '';
+  position: absolute;
+  top: 18px;
+  left: -50%;
+  width: 100%;
+  height: 6px;
+  background: #3a3f52;
+  z-index: -1;
+}
+
+.stop:first-child::before { content: none; }
+
+.stop.done::before { background: #4caf50; }
+.stop.current::before { background: #4caf50; }
+
+.dot {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #3a3f52;
+  border: 4px solid #14141c;
+}
+
+.stop.done .dot { background: #4caf50; }
+.stop.current .dot {
+  background: #ffb300;
+  width: 50px;
+  height: 50px;
+  box-shadow: 0 0 0 6px rgba(255, 179, 0, 0.25);
+}
+
+.stop-label {
+  margin-top: 10px;
+  font-size: 20px;
+  text-align: center;
+  color: #9a9ab0;
+  white-space: nowrap;
+}
+
+.stop.done .stop-label { color: #6ea875; }
+.stop.current .stop-label { color: #ffd54f; font-size: 26px; font-weight: 700; }
+.stop.final .stop-label { color: #f5f5f5; font-weight: 700; }
+
+.ellipsis {
+  flex: 0 0 60px;
+  text-align: center;
+  color: #5a5a70;
+  font-size: 28px;
+}

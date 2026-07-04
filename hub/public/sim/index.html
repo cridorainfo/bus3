@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ESP32 Simulator (dev only)</title>
+  <style>
+    body { font-family: sans-serif; background: #111; color: #eee; padding: 24px; max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 20px; }
+    p.warn { color: #ffb300; font-size: 13px; }
+    button { display: block; width: 100%; padding: 20px; font-size: 18px; margin-bottom: 12px; border: none; border-radius: 10px; font-weight: 700; }
+    .forward { background: #2e7d4f; color: #fff; }
+    .undo { background: #a13a3a; color: #fff; }
+    .replay { background: #2b5b8c; color: #fff; }
+    .stale { background: #444; color: #fff; }
+    .reconnect { background: #ffb300; color: #111; }
+    #status { text-align: center; margin: 16px 0; font-weight: 700; }
+    #status.ok { color: #7ee89a; }
+    #status.bad { color: #ff9a9a; }
+  </style>
+</head>
+<body>
+  <h1>ESP32 Simulator</h1>
+  <p class="warn">Dev-only tool (HUB_TRANSPORT=mock). Stands in for the physical push
+  switches and the serial cable, so the trip/playback/reconnect loop is testable without
+  real hardware.</p>
+
+  <div id="status">…</div>
+
+  <button class="forward" data-signal="1">Forward (1)</button>
+  <button class="undo" data-signal="2">Undo (2)</button>
+  <button class="replay" data-signal="3">Replay (3)</button>
+
+  <hr style="margin: 20px 0; border-color: #333;" />
+
+  <p class="warn">Reconnect test (spec Open Question 1): "unplug", wait, then "replug on a
+  different port" — confirm the Hub's watchdog notices, holds trip state, and recovers on
+  its own within seconds.</p>
+  <button class="stale" id="btn-stale">Simulate unplug</button>
+  <button class="reconnect" id="btn-reconnect">Simulate replug (different port)</button>
+
+  <script>
+    const statusEl = document.getElementById('status');
+
+    async function post(path, body) {
+      await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      refreshStatus();
+    }
+
+    document.querySelectorAll('button[data-signal]').forEach((btn) => {
+      btn.addEventListener('click', () => post('/debug/signal', { signal: Number(btn.dataset.signal) }));
+    });
+    document.getElementById('btn-stale').addEventListener('click', () => post('/debug/stale'));
+    document.getElementById('btn-reconnect').addEventListener('click', () => post('/debug/reconnect'));
+
+    async function refreshStatus() {
+      const res = await fetch('/debug/status');
+      const data = await res.json();
+      statusEl.textContent = data.connected ? 'ESP32 (simulated): connected' : 'ESP32 (simulated): disconnected';
+      statusEl.className = data.connected ? 'ok' : 'bad';
+    }
+    refreshStatus();
+    setInterval(refreshStatus, 3000);
+  </script>
+</body>
+</html>
