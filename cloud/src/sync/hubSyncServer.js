@@ -6,44 +6,60 @@ const db = require('../db/db');
 // bus PC is live" requirement), while a disconnected bus just catches up on its next `hello`.
 const liveSockets = new Map();
 
+// A bus can now be assigned more than one route (spec ask: pick the active one locally on the
+// phone) — this ships every assigned route's stops/content in one sync_state, deduplicated, so
+// the Hub has everything it needs to let the driver/conductor switch without a cloud round-trip.
 function buildSyncState(busId) {
   const bus = db.prepare('SELECT * FROM buses WHERE bus_id = ?').get(busId);
   if (!bus) return null;
 
-  let route = null;
-  let stops = [];
-  let contentItems = [];
+  const assignedRouteIds = db.prepare('SELECT route_id FROM bus_routes WHERE bus_id = ?').all(busId).map((r) => r.route_id);
 
-  if (bus.route_id) {
-    route = db.prepare('SELECT * FROM routes WHERE route_id = ?').get(bus.route_id);
-    // Stops are global — joined in via route_stops so a stop shared across routes only needs
-    // downloading/storing once on the Hub, no matter how many routes reference it.
-    stops = db
+  const contentMap = new Map();
+  // Truly global content (chime/filler/outro) ships regardless of route assignment, so a bus
+  // can play something sensible the moment a route is assigned.
+  for (const item of db.prepare('SELECT * FROM content_items WHERE route_id IS NULL AND stop_id IS NULL').all()) {
+    contentMap.set(item.content_id, item);
+  }
+
+  const routes = [];
+  for (const routeId of assignedRouteIds) {
+    const route = db.prepare('SELECT * FROM routes WHERE route_id = ?').get(routeId);
+    if (!route) continue;
+
+    const stops = db
       .prepare(`
         SELECT s.*, rs.sequence_no AS sequence_no
         FROM stops s JOIN route_stops rs ON rs.stop_id = s.stop_id
         WHERE rs.route_id = ?
         ORDER BY rs.sequence_no ASC
       `)
-      .all(bus.route_id);
-    const stopIds = stops.map((s) => s.stop_id);
-    const stopPlaceholders = stopIds.length ? stopIds.map(() => '?').join(',') : "''";
-    contentItems = db
-      .prepare(`SELECT * FROM content_items WHERE route_id = ? OR route_id IS NULL OR stop_id IN (${stopPlaceholders})`)
-      .all(bus.route_id, ...stopIds);
-  } else {
-    // No route assigned yet — global content (chime/filler/outro) still ships so a bus can
-    // play *something* sensible the moment a route does get assigned.
-    contentItems = db.prepare('SELECT * FROM content_items WHERE route_id IS NULL').all();
+      .all(routeId);
+    routes.push({ route_id: route.route_id, name: route.name, name_ml: route.name_ml, tier: route.tier, stops });
+
+    for (const item of db.prepare('SELECT * FROM content_items WHERE route_id = ?').all(routeId)) {
+      contentMap.set(item.content_id, item);
+    }
+    for (const stop of stops) {
+      for (const item of db.prepare('SELECT * FROM content_items WHERE stop_id = ?').all(stop.stop_id)) {
+        contentMap.set(item.content_id, item);
+      }
+    }
   }
 
   return {
     type: 'sync_state',
     payload: {
-      bus: { bus_id: bus.bus_id, reg_number: bus.reg_number, tier: bus.tier },
-      route: route ? { route_id: route.route_id, name: route.name, name_ml: route.name_ml, tier: route.tier } : null,
-      stops,
-      content_items: contentItems,
+      bus: {
+        bus_id: bus.bus_id,
+        reg_number: bus.reg_number,
+        friendly_name: bus.friendly_name,
+        tier: bus.tier,
+        connect_code: bus.connect_code,
+        devices_disconnect_at: bus.devices_disconnect_at,
+      },
+      routes,
+      content_items: Array.from(contentMap.values()),
     },
   };
 }
@@ -61,23 +77,23 @@ function pushSyncStateToBuses(busIds) {
   for (const id of busIds) pushSyncStateToBus(id);
 }
 
-// Any bus with no route (route_id IS NULL) or the given route assigned — used when global
-// content (route_id NULL) or a specific route's content/stops change.
+// Every bus with this route in its assignment set (bus_routes) — or every bus at all, when the
+// content in question is truly global (route_id NULL).
 function busIdsAffectedByRoute(routeId) {
   const rows = routeId
-    ? db.prepare('SELECT bus_id FROM buses WHERE route_id = ?').all(routeId)
-    : db.prepare('SELECT bus_id FROM buses').all(); // route_id NULL content is global — ship to everyone
+    ? db.prepare('SELECT DISTINCT bus_id FROM bus_routes WHERE route_id = ?').all(routeId)
+    : db.prepare('SELECT bus_id FROM buses').all();
   return rows.map((r) => r.bus_id);
 }
 
-// Every bus currently on a route that includes this stop — used when a global stop edit
-// (rename, ads toggle) needs to reach every affected bus, regardless of how many routes
+// Every bus assigned to any route that includes this stop — used when a global stop edit
+// (rename, ads toggle) needs to reach every affected bus, regardless of how many routes/buses
 // share that stop.
 function busIdsAffectedByStop(stopId) {
   const rows = db
     .prepare(`
-      SELECT DISTINCT b.bus_id FROM buses b
-      JOIN route_stops rs ON rs.route_id = b.route_id
+      SELECT DISTINCT br.bus_id FROM bus_routes br
+      JOIN route_stops rs ON rs.route_id = br.route_id
       WHERE rs.stop_id = ?
     `)
     .all(stopId);

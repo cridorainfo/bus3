@@ -1,16 +1,15 @@
 // AdKerala Admin — plain fetch-based SPA, no build step (same "deliberately light" approach
-// as the Hub's own frontends). Three tabs: Buses, Routes, Content.
+// as the Hub's own frontends). Three top tabs: Buses, Routes, Content (which itself has four
+// sub-sections: Announcement Audio, Stop Names, Banner Ads, Full-Screen Ads).
 
 const state = {
   routes: [],
   buses: [],
   content: [],
   expandedRouteId: null,
-  createStopOpen: {}, // routeId -> bool, whether the "+ Create new stop" fallback form is open
-  displayLang: localStorage.getItem('adkerala_admin_lang') || 'en',
 };
 
-// --- Tabs ---
+// --- Top-level tabs ---
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
@@ -20,27 +19,23 @@ document.querySelectorAll('.tab').forEach((tab) => {
   });
 });
 
-// --- Language toggle: switches every displayed route/stop name between English and Malayalam.
-// Purely a display preference (localStorage) — both fields are always still editable/stored. ---
-document.querySelectorAll('#lang-toggle .segment').forEach((btn) => {
-  btn.classList.toggle('active', btn.dataset.lang === state.displayLang);
-});
-document.querySelectorAll('#lang-toggle .segment').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    state.displayLang = btn.dataset.lang;
-    localStorage.setItem('adkerala_admin_lang', state.displayLang);
-    document.querySelectorAll('#lang-toggle .segment').forEach((b) => b.classList.toggle('active', b === btn));
-    renderRoutes();
-    renderBuses();
-    renderContent();
+// --- Content sub-tabs ---
+document.querySelectorAll('.subtab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.subtab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.subtab-panel').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(`subtab-${tab.dataset.subtab}`).classList.add('active');
   });
 });
 
-// Picks the preferred-language name, falling back to the other if empty.
-function displayName(obj) {
+// Both name fields, always shown plainly — no display-language mode to switch between.
+function bothNames(obj) {
   if (!obj) return '';
-  if (state.displayLang === 'ml') return obj.name_ml || obj.name || '';
-  return obj.name || obj.name_ml || '';
+  const en = obj.name ?? obj.name_en ?? '';
+  const ml = obj.name_ml ?? '';
+  if (en && ml) return `${en} · ${ml}`;
+  return en || ml;
 }
 
 function el(html) {
@@ -64,14 +59,14 @@ async function api(path, options = {}) {
 let searchDebounceTimer = null;
 function debouncedSearchStops(query, cb) {
   clearTimeout(searchDebounceTimer);
-  if (!query || query.trim().length < 2) {
-    cb([]);
-    return;
-  }
   searchDebounceTimer = setTimeout(async () => {
-    const results = await api(`/api/stops/search?q=${encodeURIComponent(query.trim())}`);
+    const results = await api(`/api/stops/search?q=${encodeURIComponent((query || '').trim())}`);
     cb(results);
   }, 250);
+}
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // ===================== BUSES =====================
@@ -79,6 +74,7 @@ function debouncedSearchStops(query, cb) {
 async function loadBuses() {
   state.buses = await api('/api/buses');
   renderBuses();
+  populatePairBusSelect();
 }
 
 function renderBuses() {
@@ -89,45 +85,87 @@ function renderBuses() {
     return;
   }
   for (const bus of state.buses) {
-    const routeOptions = ['<option value="">— No route —</option>']
-      .concat(state.routes.map((r) => `<option value="${r.route_id}" ${r.route_id === bus.route_id ? 'selected' : ''}>${escapeHtml(displayName(r))}</option>`))
-      .join('');
-
     const tripInfo = bus.trip_active
       ? `<div class="bus-trip">Trip active — stop #${bus.current_stop_index ?? '?'} (${bus.current_direction || 'going'})</div>`
       : '';
+    const assignedIds = new Set(bus.assigned_routes.map((r) => r.route_id));
+
+    const connectValue = bus.connect_code
+      ? `<span class="cred-value">${escapeHtml(bus.connect_code)}</span>`
+      : `<span class="cred-sub">not set</span>`;
 
     const card = el(`
       <div class="card bus-card" data-bus-id="${bus.bus_id}">
         <div class="bus-main">
           <span class="status-dot ${bus.online ? 'online' : ''}" title="${bus.online ? 'Online' : 'Offline'}"></span>
           <div>
-            <div class="bus-reg">${escapeHtml(bus.reg_number)}</div>
-            <div class="bus-meta">${bus.tier} · ${bus.online ? 'online now' : (bus.last_seen_at ? 'last seen ' + bus.last_seen_at : 'never connected')}</div>
+            <div class="bus-reg">${escapeHtml(bus.friendly_name || bus.reg_number)}</div>
+            ${bus.friendly_name ? `<div class="bus-reg-sub">${escapeHtml(bus.reg_number)}</div>` : ''}
+            <div class="bus-meta">${bus.tier} · ${bus.online ? 'online now' : (bus.last_seen_at ? 'last seen ' + bus.last_seen_at : 'never connected')}${bus.route_name ? ' · running ' + escapeHtml(bus.route_name) : ''}</div>
             ${tripInfo}
           </div>
         </div>
         <div class="bus-actions">
-          <select class="assign-route-select">${routeOptions}</select>
-          <span class="apikey" title="Click to copy — put this in the Hub's HUB_CLOUD_API_KEY">key: ${bus.api_key.slice(0, 8)}…</span>
-          <button class="btn btn-danger btn-small">Remove</button>
+          <button class="btn btn-danger btn-small remove-bus-btn">Remove</button>
         </div>
       </div>
     `);
 
-    card.querySelector('.assign-route-select').addEventListener('change', async (e) => {
-      await api(`/api/buses/${bus.bus_id}/assign-route`, { method: 'POST', body: JSON.stringify({ route_id: e.target.value || null }) });
+    const credsWrap = el(`
+      <div class="credentials-wrap">
+        <div class="cred-row">
+          <span class="cred-label" title="Persistent code a driver/conductor's phone uses to connect — stays valid until you regenerate it">Connect code</span>
+          ${connectValue}
+          <button class="btn btn-ghost btn-small gen-connect-code">${bus.connect_code ? 'Regenerate' : 'Generate'}</button>
+        </div>
+        <button class="btn btn-danger btn-small disconnect-devices-btn">Disconnect All Devices</button>
+      </div>
+    `);
+
+    credsWrap.querySelector('.gen-connect-code').addEventListener('click', async () => {
+      const result = await api(`/api/buses/${bus.bus_id}/connect-code`, { method: 'POST' });
+      alert(`Connect code for ${bus.reg_number}: ${result.connect_code}\n\nTell this to the driver/conductor for the Control Panel's connect screen.`);
       loadBuses();
     });
-    card.querySelector('.apikey').addEventListener('click', () => {
-      navigator.clipboard?.writeText(bus.api_key);
+    credsWrap.querySelector('.disconnect-devices-btn').addEventListener('click', async () => {
+      if (!confirm(`Disconnect every phone currently paired to ${bus.reg_number}? Takes effect next time this bus's Hub is online.`)) return;
+      await api(`/api/buses/${bus.bus_id}/disconnect-devices`, { method: 'POST' });
+      alert('Done — every paired phone on this bus will need the connect code again once the Hub is next online.');
     });
-    card.querySelector('.btn-danger').addEventListener('click', async () => {
-      if (!confirm(`Remove bus ${bus.reg_number}?`)) return;
+
+    const routesWrap = el(`<div class="bus-routes-wrap"><div class="label">Assigned routes</div><div class="bus-routes-list"></div></div>`);
+    const routesList = routesWrap.querySelector('.bus-routes-list');
+    if (state.routes.length === 0) {
+      routesList.appendChild(el(`<div class="hint">No routes exist yet — add one in the Routes tab.</div>`));
+    } else {
+      for (const route of state.routes) {
+        const checked = assignedIds.has(route.route_id);
+        const row = el(`
+          <label class="route-check-row">
+            <input type="checkbox" ${checked ? 'checked' : ''} />
+            <span>${escapeHtml(bothNames(route))}</span>
+          </label>
+        `);
+        row.querySelector('input').addEventListener('change', async (e) => {
+          if (e.target.checked) {
+            await api(`/api/buses/${bus.bus_id}/routes`, { method: 'POST', body: JSON.stringify({ route_id: route.route_id }) });
+          } else {
+            await api(`/api/buses/${bus.bus_id}/routes/${route.route_id}`, { method: 'DELETE' });
+          }
+          loadBuses();
+        });
+        routesList.appendChild(row);
+      }
+    }
+
+    card.querySelector('.remove-bus-btn').addEventListener('click', async () => {
+      if (!confirm(`Remove bus ${bus.friendly_name || bus.reg_number}?`)) return;
       await api(`/api/buses/${bus.bus_id}`, { method: 'DELETE' });
       loadBuses();
     });
 
+    card.appendChild(credsWrap);
+    card.appendChild(routesWrap);
     list.appendChild(card);
   }
 }
@@ -137,6 +175,7 @@ document.getElementById('form-add-bus').addEventListener('submit', async (e) => 
   await api('/api/buses', {
     method: 'POST',
     body: JSON.stringify({
+      friendly_name: document.getElementById('bus-name').value,
       reg_number: document.getElementById('bus-reg').value,
       tier: document.getElementById('bus-tier').value,
       hardware_version: document.getElementById('bus-hw').value,
@@ -146,13 +185,48 @@ document.getElementById('form-add-bus').addEventListener('submit', async (e) => 
   loadBuses();
 });
 
+// --- Pair a Bus: the Hub generates and shows its own pairing ID (no keyboard needed at the
+// unattended kiosk PC) — the admin reads that ID and picks which bus record it links to. ---
+function populatePairBusSelect() {
+  const sel = document.getElementById('pair-bus-select');
+  // Preserve the current selection only if it's still a valid option after refresh — restoring
+  // a stale/empty value here deselects everything (a select's .value doesn't fall back to the
+  // first option when set to something that matches no option).
+  const current = sel.value;
+  sel.innerHTML = state.buses.map((b) => `<option value="${b.bus_id}">${escapeHtml(b.friendly_name || b.reg_number)} (${escapeHtml(b.reg_number)})</option>`).join('');
+  if (state.buses.some((b) => b.bus_id === current)) sel.value = current;
+}
+
+document.getElementById('form-pair-bus').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('pair-hint');
+  hint.textContent = 'Pairing…';
+  hint.className = 'hint';
+  try {
+    await api('/api/pair/claim', {
+      method: 'POST',
+      body: JSON.stringify({
+        device_pairing_id: document.getElementById('pair-device-id').value.trim().toUpperCase(),
+        bus_id: document.getElementById('pair-bus-select').value,
+      }),
+    });
+    document.getElementById('form-pair-bus').reset();
+    hint.textContent = 'Paired — the bus should pick this up within a few seconds.';
+    hint.className = 'hint success';
+    loadBuses();
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
+
 // ===================== ROUTES =====================
 
 async function loadRoutes() {
   state.routes = await api('/api/routes');
   renderRoutes();
-  renderBuses(); // route names feed the assign-route dropdown
-  populateContentRouteOptions();
+  renderBuses(); // route list feeds the assigned-routes checklist
+  populateRouteSelects();
 }
 
 function renderRoutes() {
@@ -167,7 +241,7 @@ function renderRoutes() {
       <div class="card" data-route-id="${route.route_id}">
         <div class="route-card-head">
           <div>
-            <div class="route-title">${escapeHtml(displayName(route))}</div>
+            <div class="route-title">${escapeHtml(bothNames(route))}</div>
             <div class="route-meta">${route.tier} · ${route.stop_count} stops · ${route.bus_count} bus(es) assigned</div>
           </div>
           <div class="bus-actions">
@@ -184,7 +258,7 @@ function renderRoutes() {
       renderRoutes();
     });
     card.querySelector('.delete-route').addEventListener('click', async () => {
-      if (!confirm(`Delete route "${displayName(route)}"?`)) return;
+      if (!confirm(`Delete route "${bothNames(route)}"?`)) return;
       try {
         await api(`/api/routes/${route.route_id}`, { method: 'DELETE' });
         loadRoutes();
@@ -213,20 +287,18 @@ async function renderStopEditor(mount, routeId) {
   }
 
   stops.forEach((stop, idx) => {
+    // Ads are managed from Content > Stop Names now — this is a read-only status badge so
+    // there's exactly one place that toggles it.
+    const adsBadge = stop.has_ad_clip
+      ? `<span class="also-used-badge ${stop.ads_enabled ? 'ads-on' : ''}">Ads: ${stop.ads_enabled ? 'on' : 'off'}</span>`
+      : '';
     const row = el(`
       <div class="stop-row" data-stop-id="${stop.stop_id}">
         <div class="stop-seq">${idx + 1}</div>
         <div class="stop-names">
-          <div class="stop-name-ml">${escapeHtml(displayName({ name: stop.name_en, name_ml: stop.name_ml }))}</div>
-          <div class="stop-name-en">${escapeHtml(state.displayLang === 'ml' ? (stop.name_en || '') : (stop.name_ml || ''))}</div>
+          <div class="stop-name-ml">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</div>
         </div>
-        <div class="ads-toggle-wrap">
-          <label class="switch" title="${stop.has_ad_clip ? 'Swap in the stop-name-with-ad clip' : 'Upload a stop_name_ad clip in Content first'}">
-            <input type="checkbox" class="ads-toggle" ${stop.ads_enabled ? 'checked' : ''} ${stop.has_ad_clip ? '' : 'disabled'} />
-            <span class="slider"></span>
-          </label>
-          Ads
-        </div>
+        ${adsBadge}
         <div class="stop-row-actions">
           <button class="icon-btn move-up" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="icon-btn move-down" title="Move down" ${idx === stops.length - 1 ? 'disabled' : ''}>↓</button>
@@ -235,10 +307,6 @@ async function renderStopEditor(mount, routeId) {
       </div>
     `);
 
-    row.querySelector('.ads-toggle').addEventListener('change', async (e) => {
-      await api(`/api/stops/${stop.stop_id}/toggle-ads`, { method: 'POST', body: JSON.stringify({ enabled: e.target.checked }) });
-      renderStopEditor(mount, routeId);
-    });
     row.querySelector('.move-up').addEventListener('click', async () => {
       const order = stops.map((s) => s.stop_id);
       [order[idx - 1], order[idx]] = [order[idx], order[idx - 1]];
@@ -264,7 +332,8 @@ async function renderStopEditor(mount, routeId) {
 }
 
 // The "find or link a stop" UX: search across every stop (any route), link an existing one
-// with all its recorded audio intact, or fall back to creating a genuinely new one.
+// with all its recorded audio intact, or fall back to creating a genuinely new one. A stop
+// created here shows up in Content > Stop Names immediately — same global `stops` table.
 function buildStopPicker(routeId, alreadyLinkedIds) {
   const wrap = el(`
     <div class="stop-picker">
@@ -288,6 +357,10 @@ function buildStopPicker(routeId, alreadyLinkedIds) {
   const createForm = wrap.querySelector('.create-stop-form');
 
   searchInput.addEventListener('input', () => {
+    if (searchInput.value.trim().length < 2) {
+      resultsEl.innerHTML = '';
+      return;
+    }
     debouncedSearchStops(searchInput.value, (results) => {
       resultsEl.innerHTML = '';
       for (const stop of results) {
@@ -296,7 +369,7 @@ function buildStopPicker(routeId, alreadyLinkedIds) {
         const row = el(`
           <div class="search-result-row">
             <div>
-              <span class="search-result-name">${escapeHtml(displayName({ name: stop.name_en, name_ml: stop.name_ml }))}</span>
+              <span class="search-result-name">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</span>
               ${usedElsewhere.length ? `<span class="also-used-badge">also used by ${usedElsewhere.length} other route(s)</span>` : ''}
             </div>
             <button class="btn btn-ghost btn-small link-stop-btn" ${already ? 'disabled' : ''}>${already ? 'Already linked' : 'Link'}</button>
@@ -345,118 +418,203 @@ document.getElementById('form-add-route').addEventListener('submit', async (e) =
   loadRoutes();
 });
 
+function populateRouteSelects() {
+  const opts = '<option value="">— Global —</option>' + state.routes.map((r) => `<option value="${r.route_id}">${escapeHtml(bothNames(r))}</option>`).join('');
+  for (const id of ['banner-route', 'fullscreen-route']) {
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = opts;
+    sel.value = current;
+  }
+}
+
 // ===================== CONTENT =====================
-
-function populateContentRouteOptions() {
-  const sel = document.getElementById('content-route');
-  const current = sel.value;
-  sel.innerHTML = '<option value="">— Global —</option>' + state.routes.map((r) => `<option value="${r.route_id}">${escapeHtml(displayName(r))}</option>`).join('');
-  sel.value = current;
-}
-
-const STOP_SPECIFIC_TYPES = new Set(['stop_name', 'stop_name_ad']);
-
-const contentStopField = document.getElementById('content-stop-field');
-const contentStopSearch = document.getElementById('content-stop-search');
-const contentStopResults = document.getElementById('content-stop-results');
-const contentStopIdInput = document.getElementById('content-stop-id');
-const contentStopPicked = document.getElementById('content-stop-picked');
-
-function updateContentStopFieldVisibility() {
-  const isStopType = STOP_SPECIFIC_TYPES.has(document.getElementById('content-type').value);
-  contentStopField.style.display = isStopType ? 'flex' : 'none';
-}
-document.getElementById('content-type').addEventListener('change', updateContentStopFieldVisibility);
-updateContentStopFieldVisibility();
-
-contentStopSearch.addEventListener('input', () => {
-  debouncedSearchStops(contentStopSearch.value, (results) => {
-    contentStopResults.innerHTML = '';
-    for (const stop of results) {
-      const row = el(`
-        <div class="search-result-row">
-          <span class="search-result-name">${escapeHtml(displayName({ name: stop.name_en, name_ml: stop.name_ml }))}</span>
-          <button type="button" class="btn btn-ghost btn-small">Pick</button>
-        </div>
-      `);
-      row.querySelector('button').addEventListener('click', () => {
-        contentStopIdInput.value = stop.stop_id;
-        contentStopPicked.textContent = displayName({ name: stop.name_en, name_ml: stop.name_ml });
-        contentStopPicked.style.display = 'inline-flex';
-        contentStopSearch.value = '';
-        contentStopResults.innerHTML = '';
-      });
-      contentStopResults.appendChild(row);
-    }
-  });
-});
 
 async function loadContent() {
   state.content = await api('/api/content');
-  renderContent();
+  renderAnnouncementList();
+  renderBannerList();
+  renderFullscreenList();
 }
 
-function renderContent() {
-  const list = document.getElementById('content-list');
+function previewFor(item) {
+  const url = `/content/${item.file_path}`;
+  const isVideo = /\.(mp4|webm)$/i.test(item.file_path);
+  const isImage = /\.(png|jpe?g|webp)$/i.test(item.file_path);
+  if (isVideo) return `<video class="preview" controls src="${url}"></video>`;
+  if (isImage) return `<img class="preview" src="${url}" alt="" style="max-height:60px;border-radius:8px" />`;
+  return `<audio controls src="${url}"></audio>`;
+}
+
+function contentCard(item, { scopeLabel }) {
+  const card = el(`
+    <div class="card content-card" data-content-id="${item.content_id}">
+      <div class="content-main">
+        <span class="badge">${item.type.replace('_', ' ')}</span>
+        <div>
+          <div class="content-title">${escapeHtml(item.original_filename || item.content_id)}</div>
+          <div class="content-meta">${escapeHtml(scopeLabel)}${item.tier ? ' · ' + item.tier : ''}</div>
+        </div>
+        ${previewFor(item)}
+      </div>
+      <button class="btn btn-danger btn-small">Delete</button>
+    </div>
+  `);
+  card.querySelector('.btn-danger').addEventListener('click', async () => {
+    if (!confirm('Delete this content item?')) return;
+    await api(`/api/content/${item.content_id}`, { method: 'DELETE' });
+    loadContent();
+  });
+  return card;
+}
+
+// --- Announcement Audio (chime / filler / outro — global, shared by every stop) ---
+
+function renderAnnouncementList() {
+  const list = document.getElementById('announcement-list');
   list.innerHTML = '';
-  if (state.content.length === 0) {
-    list.appendChild(el(`<div class="empty-state">No content uploaded yet.</div>`));
+  const items = state.content.filter((c) => ['chime', 'filler', 'outro'].includes(c.type));
+  if (items.length === 0) {
+    list.appendChild(el(`<div class="empty-state">No announcement clips uploaded yet.</div>`));
     return;
   }
-  const isVideo = (p) => /\.(mp4|webm)$/i.test(p);
-  const isImage = (p) => /\.(png|jpe?g|webp)$/i.test(p);
+  for (const item of items) {
+    list.appendChild(contentCard(item, { scopeLabel: 'Global · every announcement' }));
+  }
+}
 
-  for (const item of state.content) {
-    const url = `/content/${item.file_path}`;
-    let preview = `<audio controls src="${url}"></audio>`;
-    if (isVideo(item.file_path)) preview = `<video class="preview" controls src="${url}"></video>`;
-    if (isImage(item.file_path)) preview = `<img class="preview" src="${url}" alt="" style="max-height:60px;border-radius:8px" />`;
+document.getElementById('form-add-announcement').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('announcement-upload-hint');
+  hint.textContent = 'Uploading…';
+  hint.className = 'hint';
+  const fd = new FormData();
+  fd.append('type', document.getElementById('announcement-type').value);
+  fd.append('file', document.getElementById('announcement-file').files[0]);
+  try {
+    await api('/api/content', { method: 'POST', body: fd });
+    document.getElementById('form-add-announcement').reset();
+    hint.textContent = 'Uploaded — if there was already a clip in this slot, delete the old one below so only one plays.';
+    hint.className = 'hint success';
+    loadContent();
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
 
-    const scope = item.stop_name ? `${item.route_name || ''} · ${item.stop_name}` : (item.route_name || 'Global');
+// --- Stop Names: searchable directory of every global stop ---
 
-    const card = el(`
-      <div class="card content-card" data-content-id="${item.content_id}">
-        <div class="content-main">
-          <span class="badge">${item.type.replace('_', ' ')}</span>
+async function loadStopDirectory(query) {
+  const results = await api(`/api/stops/search?q=${encodeURIComponent(query || '')}`);
+  renderStopDirectory(results);
+}
+
+function renderStopDirectory(stops) {
+  const list = document.getElementById('stopnames-list');
+  list.innerHTML = '';
+  if (stops.length === 0) {
+    list.appendChild(el(`<div class="empty-state">No stops match — create one from the Routes tab.</div>`));
+    return;
+  }
+  for (const stop of stops) {
+    const usedBy = stop.used_by_routes.map((r) => r.name).join(', ') || 'not linked to any route yet';
+    const row = el(`
+      <div class="card stopname-row" data-stop-id="${stop.stop_id}">
+        <div class="stopname-head">
           <div>
-            <div class="content-title">${escapeHtml(item.original_filename || item.content_id)}</div>
-            <div class="content-meta">${escapeHtml(scope)}${item.tier ? ' · ' + item.tier : ''}</div>
+            <div class="content-title">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</div>
+            <div class="content-meta">Used by: ${escapeHtml(usedBy)}</div>
           </div>
-          ${preview}
+          <div class="ads-toggle-wrap">
+            <label class="switch" title="${stop.has_ad_clip ? 'Swap in the ad clip for this stop' : 'Upload an ad clip first'}">
+              <input type="checkbox" class="ads-toggle" ${stop.ads_enabled ? 'checked' : ''} ${stop.has_ad_clip ? '' : 'disabled'} />
+              <span class="slider"></span>
+            </label>
+            Ads
+          </div>
         </div>
-        <button class="btn btn-danger btn-small">Delete</button>
+        <div class="stopname-clips">
+          <div class="clip-slot" data-slot="stop_name">
+            <div class="label">Stop name (plain)</div>
+            <div class="clip-current"></div>
+            <input type="file" class="clip-file" />
+            <button type="button" class="btn btn-ghost btn-small clip-upload">Upload</button>
+          </div>
+          <div class="clip-slot" data-slot="stop_name_ad">
+            <div class="label">Stop name (with ad)</div>
+            <div class="clip-current"></div>
+            <input type="file" class="clip-file" />
+            <button type="button" class="btn btn-ghost btn-small clip-upload">Upload</button>
+          </div>
+        </div>
       </div>
     `);
 
-    card.querySelector('.btn-danger').addEventListener('click', async () => {
-      if (!confirm('Delete this content item?')) return;
-      await api(`/api/content/${item.content_id}`, { method: 'DELETE' });
-      loadContent();
+    row.querySelector('.ads-toggle').addEventListener('change', async (e) => {
+      await api(`/api/stops/${stop.stop_id}/toggle-ads`, { method: 'POST', body: JSON.stringify({ enabled: e.target.checked }) });
+      loadStopDirectory(document.getElementById('stopnames-search').value);
     });
 
-    list.appendChild(card);
+    const existingForType = (type) => state.content.find((c) => c.stop_id === stop.stop_id && c.type === type);
+    row.querySelectorAll('.clip-slot').forEach((slotEl) => {
+      const slotType = slotEl.dataset.slot;
+      const existing = existingForType(slotType);
+      const currentEl = slotEl.querySelector('.clip-current');
+      currentEl.innerHTML = existing ? previewFor(existing) : '<span class="hint">Not uploaded yet</span>';
+
+      slotEl.querySelector('.clip-upload').addEventListener('click', async () => {
+        const fileInput = slotEl.querySelector('.clip-file');
+        if (!fileInput.files[0]) return;
+        const fd = new FormData();
+        fd.append('type', slotType);
+        fd.append('stop_id', stop.stop_id);
+        fd.append('file', fileInput.files[0]);
+        await api('/api/content', { method: 'POST', body: fd });
+        state.content = await api('/api/content');
+        loadStopDirectory(document.getElementById('stopnames-search').value);
+      });
+    });
+
+    list.appendChild(row);
   }
 }
 
-document.getElementById('form-add-content').addEventListener('submit', async (e) => {
+let stopnamesDebounce = null;
+document.getElementById('stopnames-search').addEventListener('input', (e) => {
+  clearTimeout(stopnamesDebounce);
+  const q = e.target.value;
+  stopnamesDebounce = setTimeout(() => loadStopDirectory(q), 250);
+});
+
+// --- Banner Ads ---
+
+function renderBannerList() {
+  const list = document.getElementById('banner-list');
+  list.innerHTML = '';
+  const items = state.content.filter((c) => c.type === 'ad_banner');
+  if (items.length === 0) {
+    list.appendChild(el(`<div class="empty-state">No banner ads uploaded yet.</div>`));
+    return;
+  }
+  for (const item of items) {
+    list.appendChild(contentCard(item, { scopeLabel: item.route_name || 'Global' }));
+  }
+}
+
+document.getElementById('form-add-banner').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const hint = document.getElementById('content-upload-hint');
+  const hint = document.getElementById('banner-upload-hint');
   hint.textContent = 'Uploading…';
   hint.className = 'hint';
-
   const fd = new FormData();
-  fd.append('type', document.getElementById('content-type').value);
-  fd.append('route_id', document.getElementById('content-route').value);
-  fd.append('stop_id', contentStopIdInput.value);
-  fd.append('tier', document.getElementById('content-tier').value);
-  fd.append('file', document.getElementById('content-file').files[0]);
-
+  fd.append('type', 'ad_banner');
+  fd.append('route_id', document.getElementById('banner-route').value);
+  fd.append('tier', document.getElementById('banner-tier').value);
+  fd.append('file', document.getElementById('banner-file').files[0]);
   try {
     await api('/api/content', { method: 'POST', body: fd });
-    document.getElementById('form-add-content').reset();
-    contentStopIdInput.value = '';
-    contentStopPicked.style.display = 'none';
-    updateContentStopFieldVisibility();
+    document.getElementById('form-add-banner').reset();
     hint.textContent = 'Uploaded — pushed live to matching buses that are online.';
     hint.className = 'hint success';
     loadContent();
@@ -466,16 +624,50 @@ document.getElementById('form-add-content').addEventListener('submit', async (e)
   }
 });
 
-// ===================== Shared =====================
+// --- Full-Screen (Video) Ads ---
 
-function escapeHtml(str) {
-  return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function renderFullscreenList() {
+  const list = document.getElementById('fullscreen-list');
+  list.innerHTML = '';
+  const items = state.content.filter((c) => ['ad_video', 'music'].includes(c.type));
+  if (items.length === 0) {
+    list.appendChild(el(`<div class="empty-state">No full-screen ads uploaded yet.</div>`));
+    return;
+  }
+  for (const item of items) {
+    list.appendChild(contentCard(item, { scopeLabel: item.route_name || 'Global' }));
+  }
 }
+
+document.getElementById('form-add-fullscreen').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('fullscreen-upload-hint');
+  hint.textContent = 'Uploading…';
+  hint.className = 'hint';
+  const fd = new FormData();
+  fd.append('type', document.getElementById('fullscreen-type').value);
+  fd.append('route_id', document.getElementById('fullscreen-route').value);
+  fd.append('tier', document.getElementById('fullscreen-tier').value);
+  fd.append('file', document.getElementById('fullscreen-file').files[0]);
+  try {
+    await api('/api/content', { method: 'POST', body: fd });
+    document.getElementById('form-add-fullscreen').reset();
+    hint.textContent = 'Uploaded — pushed live to matching buses that are online.';
+    hint.className = 'hint success';
+    loadContent();
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
+
+// ===================== Boot =====================
 
 async function refreshAll() {
   await loadRoutes();
   await loadBuses();
   await loadContent();
+  loadStopDirectory(''); // browse-all by default — a stop created via Routes shows up immediately
 }
 
 refreshAll();

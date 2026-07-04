@@ -19,10 +19,16 @@ body {
   border-bottom: 3px solid #ffb300;
 }
 
-#reg-number {
+#bus-name {
   font-size: 30px;
   font-weight: 800;
   letter-spacing: 1px;
+}
+
+#reg-number-sub {
+  font-size: 13px;
+  color: #6e6e80;
+  letter-spacing: 0.5px;
 }
 
 #route-name {
@@ -30,6 +36,37 @@ body {
   color: #9a9ab0;
   margin-top: 2px;
 }
+
+.disconnect-link {
+  margin-top: 10px;
+  background: none;
+  border: none;
+  color: #6e6e80;
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 4px;
+}
+
+.connect-hint {
+  font-size: 13px;
+  color: #9a9ab0;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.route-picker {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  font-size: 18px;
+  font-weight: 700;
+  border-radius: 14px;
+  border: none;
+  background: #1b1b2a;
+  color: #f0f0f5;
+  margin-bottom: 20px;
+}
+.route-picker:disabled { opacity: 0.6; }
 
 #screens {
   flex: 1;

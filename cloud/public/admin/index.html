@@ -14,10 +14,6 @@
       <button class="tab" data-tab="routes">Routes</button>
       <button class="tab" data-tab="content">Content</button>
     </nav>
-    <div id="lang-toggle" class="segmented segmented-sm">
-      <button class="segment active" data-lang="en">EN</button>
-      <button class="segment" data-lang="ml">മല</button>
-    </div>
   </header>
 
   <main class="wrap">
@@ -26,10 +22,27 @@
     <section id="tab-buses" class="tab-panel active">
       <div class="panel-head">
         <h1>Buses</h1>
-        <p class="subtitle">Register a bus, then assign it a route. Live status updates while the bus's Hub is online.</p>
+        <p class="subtitle">Register a bus, then assign it one or more routes — the driver/conductor picks which is active from their phone, locally. Live status updates while the bus's Hub is online.</p>
       </div>
 
+      <form id="form-pair-bus" class="card form-inline pair-bus-card">
+        <div class="field">
+          <label>Pairing ID (shown on the bus's screen)</label>
+          <input type="text" id="pair-device-id" placeholder="XJ4K9P" autocapitalize="characters" required />
+        </div>
+        <div class="field">
+          <label>Link to bus</label>
+          <select id="pair-bus-select"></select>
+        </div>
+        <button type="submit" class="btn btn-primary">Pair</button>
+      </form>
+      <div id="pair-hint" class="hint"></div>
+
       <form id="form-add-bus" class="card form-inline">
+        <div class="field">
+          <label>Friendly name</label>
+          <input type="text" id="bus-name" placeholder="City Circular 1" />
+        </div>
         <div class="field">
           <label>Registration number</label>
           <input type="text" id="bus-reg" placeholder="KL07AX1234" required />
@@ -56,7 +69,7 @@
     <section id="tab-routes" class="tab-panel">
       <div class="panel-head">
         <h1>Routes</h1>
-        <p class="subtitle">A route is a stop list any number of buses can share. Editing stops updates every bus on that route live.</p>
+        <p class="subtitle">A route is a stop list any number of buses can share. Find or create a stop here — manage its audio and ads in Content &gt; Stop Names.</p>
       </div>
 
       <form id="form-add-route" class="card form-inline">
@@ -86,52 +99,102 @@
     <section id="tab-content" class="tab-panel">
       <div class="panel-head">
         <h1>Content Library</h1>
-        <p class="subtitle">Ads and audio segments. Global segments (chime/outro) ship to every bus; route/stop-scoped items ship only where assigned.</p>
+        <p class="subtitle">Organized the way the audio actually works: common announcement clips, per-stop names, and the two ad formats.</p>
       </div>
 
-      <form id="form-add-content" class="card form-inline" enctype="multipart/form-data">
-        <div class="field">
-          <label>Type</label>
-          <select id="content-type">
-            <option value="ad_video">Ad video</option>
-            <option value="ad_banner">Ad banner</option>
-            <option value="chime">Chime (common, every announcement)</option>
-            <option value="filler">Filler phrase (common, every announcement)</option>
-            <option value="stop_name">Stop name (plain)</option>
-            <option value="stop_name_ad">Stop name (with ad — swaps in when toggled on)</option>
-            <option value="outro">Outro</option>
-            <option value="music">Music</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Route (optional = global; only for ad video/banner)</label>
-          <select id="content-route"><option value="">— Global —</option></select>
-        </div>
-        <div class="field stop-picker-field" id="content-stop-field" style="display:none">
-          <label>Stop</label>
-          <input type="text" id="content-stop-search" placeholder="Search stops…" autocomplete="off" />
-          <input type="hidden" id="content-stop-id" />
-          <div id="content-stop-results" class="search-results"></div>
-          <div id="content-stop-picked" class="picked-chip" style="display:none"></div>
-        </div>
-        <div class="field">
-          <label>Tier</label>
-          <select id="content-tier">
-            <option value="">Any</option>
-            <option value="rural">Rural</option>
-            <option value="urban_standard">Urban standard</option>
-            <option value="urban_women_premium">Urban women-premium</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>File</label>
-          <input type="file" id="content-file" required />
-        </div>
-        <button type="submit" class="btn btn-primary">Upload</button>
-      </form>
-      <div id="content-upload-hint" class="hint"></div>
+      <nav class="subtabs">
+        <button class="subtab active" data-subtab="announcement">Announcement Audio</button>
+        <button class="subtab" data-subtab="stopnames">Stop Names</button>
+        <button class="subtab" data-subtab="banner">Banner Ads</button>
+        <button class="subtab" data-subtab="fullscreen">Full-Screen Ads</button>
+      </nav>
 
-      <div id="content-list" class="stack"></div>
+      <!-- --- Announcement Audio: chime / filler / outro, global, shared by every stop --- -->
+      <section id="subtab-announcement" class="subtab-panel active">
+        <p class="subtitle">Common to every stop's announcement: <code>chime → filler → stop name → outro</code>. Uploading replaces the current clip for that slot.</p>
+        <form id="form-add-announcement" class="card form-inline" enctype="multipart/form-data">
+          <div class="field">
+            <label>Slot</label>
+            <select id="announcement-type">
+              <option value="chime">Chime</option>
+              <option value="filler">Filler phrase (e.g. "attention please, next stop is")</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <div class="field"><label>File</label><input type="file" id="announcement-file" required /></div>
+          <button type="submit" class="btn btn-primary">Upload</button>
+        </form>
+        <div id="announcement-upload-hint" class="hint"></div>
+        <div id="announcement-list" class="stack"></div>
+      </section>
+
+      <!-- --- Stop Names: searchable directory of every global stop --- -->
+      <section id="subtab-stopnames" class="subtab-panel">
+        <p class="subtitle">Every stop, from every route, in one place — a stop added while building a route shows up here automatically. Upload the plain name clip, optionally an ad-combined clip, and toggle which one plays.</p>
+        <div class="card">
+          <div class="field" style="min-width:100%">
+            <label>Search stops</label>
+            <input type="text" id="stopnames-search" placeholder="Type to filter, or leave blank to see all…" autocomplete="off" />
+          </div>
+        </div>
+        <div id="stopnames-list" class="stack"></div>
+      </section>
+
+      <!-- --- Banner Ads --- -->
+      <section id="subtab-banner" class="subtab-panel">
+        <p class="subtitle">Static banner images shown on the passenger display.</p>
+        <form id="form-add-banner" class="card form-inline" enctype="multipart/form-data">
+          <div class="field">
+            <label>Route (optional = global)</label>
+            <select id="banner-route"><option value="">— Global —</option></select>
+          </div>
+          <div class="field">
+            <label>Tier</label>
+            <select id="banner-tier">
+              <option value="">Any</option>
+              <option value="rural">Rural</option>
+              <option value="urban_standard">Urban standard</option>
+              <option value="urban_women_premium">Urban women-premium</option>
+            </select>
+          </div>
+          <div class="field"><label>Image file</label><input type="file" id="banner-file" accept="image/*" required /></div>
+          <button type="submit" class="btn btn-primary">Upload</button>
+        </form>
+        <div id="banner-upload-hint" class="hint"></div>
+        <div id="banner-list" class="stack"></div>
+      </section>
+
+      <!-- --- Full-Screen (Video) Ads --- -->
+      <section id="subtab-fullscreen" class="subtab-panel">
+        <p class="subtitle">Full-screen video ads (and background music) that rotate on the passenger display.</p>
+        <form id="form-add-fullscreen" class="card form-inline" enctype="multipart/form-data">
+          <div class="field">
+            <label>Type</label>
+            <select id="fullscreen-type">
+              <option value="ad_video">Video ad</option>
+              <option value="music">Music</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Route (optional = global)</label>
+            <select id="fullscreen-route"><option value="">— Global —</option></select>
+          </div>
+          <div class="field">
+            <label>Tier</label>
+            <select id="fullscreen-tier">
+              <option value="">Any</option>
+              <option value="rural">Rural</option>
+              <option value="urban_standard">Urban standard</option>
+              <option value="urban_women_premium">Urban women-premium</option>
+            </select>
+          </div>
+          <div class="field"><label>Video/audio file</label><input type="file" id="fullscreen-file" required /></div>
+          <button type="submit" class="btn btn-primary">Upload</button>
+        </form>
+        <div id="fullscreen-upload-hint" class="hint"></div>
+        <div id="fullscreen-list" class="stack"></div>
+      </section>
+
     </section>
 
   </main>

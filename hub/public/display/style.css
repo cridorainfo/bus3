@@ -9,6 +9,54 @@ html, body {
   font-family: 'Segoe UI', Arial, sans-serif;
 }
 
+#pairing-screen {
+  display: none;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.pairing-box { text-align: center; }
+
+.pairing-label {
+  font-size: 32px;
+  color: #9a9ab0;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+
+#pairing-id-value {
+  font-size: 160px;
+  font-weight: 800;
+  letter-spacing: 24px;
+  color: #ffb300;
+  font-family: 'Consolas', 'SFMono-Regular', monospace;
+}
+
+.pairing-hint {
+  margin-top: 32px;
+  font-size: 28px;
+  color: #6e6e80;
+}
+
+#route-name-label {
+  position: absolute;
+  top: 20px;
+  left: 40px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #f5f5f5;
+  background: rgba(10, 10, 15, 0.6);
+  padding: 8px 20px;
+  border-radius: 10px;
+  z-index: 2;
+}
+#route-name-label:empty { display: none; }
+
+#normal-view { position: relative; width: 100%; height: 100%; }
+
 #ad-area {
   position: relative;
   width: 100%;

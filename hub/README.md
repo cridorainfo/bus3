@@ -20,6 +20,14 @@ see `composeAnnouncement` in `src/engine/playbackEngine.js`.
 so the same physical stop (and its recorded audio) can be shared across routes without
 duplicating anything. See the Admin's Routes tab "find or link a stop" search.
 
+**Multi-route buses + identity**: a bus can be assigned several routes; the driver/conductor
+picks which is active from the Control Panel, entirely locally (no cloud round-trip). The Hub
+itself pairs to the cloud like a smart TV — it generates and displays its own short **pairing
+ID** on the Display View (its only screen; there's no keyboard at an unattended kiosk PC), an
+admin reads that ID and claims it from the Admin dashboard. Phones connect to the Control Panel
+separately, with a persistent **connect code** that keeps them paired until they disconnect or
+an admin disconnects everyone — see "Pairing this Hub to the cloud" below.
+
 ## Quick start (dev, no hardware needed)
 
 ```
@@ -32,11 +40,13 @@ HUB_TRANSPORT=mock npm start
 Open in a browser:
 - `http://localhost:3000/panel/` — Control Panel (phone UI)
 - `http://localhost:3000/display/` — Display View (open this on a second tab/window; it's
-  built for a 1920x1080 kiosk canvas)
+  built for a 1920x1080 kiosk canvas). Shows this Hub's pairing ID until it's paired — see below.
 - `http://localhost:3000/sim/` — ESP32 Simulator (stands in for the push switches and cable)
 
-Seeded demo data: bus `HUB-DEV-01` / reg `KL07AX1234`, route `R1` (Kochi–Thrissur, 6 stops),
-today's shared PIN is **1234**. Delete `data/hub.db` to reset and re-seed.
+Seeded demo data: a local route `R1` (Kochi–Thrissur, 6 stops) — but **no bus identity** until
+you pair it (see below). `HUB_BUS_ID`/`HUB_REG_NUMBER`/`HUB_CLOUD_API_KEY` env vars remain a
+dev-only shortcut that bypasses pairing entirely (see `src/db/seed.js`). Delete `data/hub.db` to
+reset everything and start unpaired again.
 
 ## Running against real hardware
 
@@ -46,7 +56,9 @@ scans `SerialPort.list()` for a device matching `device_config.esp32_vid` /
 / `HUB_ESP32_PID` env vars or by editing the seeded `device_config` row to match your actual
 board) — never a hardcoded COM port, per spec 3.2.
 
-Flash `../firmware/esp32_controller/esp32_controller.ino` to the ESP32 first.
+Flash `../firmware/esp32_controller/esp32_controller.ino` to the ESP32 first. Bench-testing with
+an Arduino Uno instead? Use `../firmware/arduino_uno_controller/arduino_uno_controller.ino` —
+same protocol, Uno-valid pins — see `../DEPLOYMENT.md` Part 2.4a for wiring and VID/PID lookup.
 
 ## The reconnect test (spec Open Question 1 — the most safety-critical item in the spec)
 
@@ -58,18 +70,29 @@ Without hardware, the `/sim/` page's "Simulate unplug" / "Simulate replug" butto
 the same code path (`transport 'status' events` -> `watchdog.js` -> fault logged, trip state
 held in `engine/state.js` untouched throughout).
 
-## Cloud sync (sample Phase 2)
+## Pairing this Hub to the cloud
 
-By default the Hub connects to `ws://localhost:4000/hub-sync` using bus id `HUB-DEV-01` and
-api key `dev-demo-key` — matching `../cloud/`'s seeded demo bus, so running both services
-locally just works. Override with `HUB_CLOUD_URL`, `HUB_CLOUD_HTTP`, `HUB_CLOUD_API_KEY`.
+A fresh (or freshly reinstalled) Hub has no bus identity — `device_config` is empty,
+`src/sync/pairingAgent.js` generates a short pairing ID and shows it on the Display View (the
+Hub's only screen — no keyboard, nothing is ever typed here), and `src/sync/syncAgent.js` just
+waits. Like pairing a smart TV: the admin reads the ID off the screen and links it to a bus from
+the dashboard, not the other way around.
 
-Start the cloud server (`cd ../cloud && npm install && npm start`), then in its Admin page
-(`http://localhost:4000/admin/`) add a route with some stops and assign it to the bus — the
-already-running Hub picks it up within a second or two, no restart, and downloads any
-uploaded ad/audio content into `assets/`. If the cloud server is offline or unreachable, the
-Hub keeps working exactly as in Phase 1 — the sync agent just retries with backoff in the
-background and never blocks anything the driver/conductor does.
+1. Start the cloud server (`cd ../cloud && npm install && npm start`), start this Hub, and open
+   its Display View (`http://localhost:3000/display/`) — it shows a 6-character pairing ID.
+2. In the cloud's Admin (`http://localhost:4000/admin/`), Buses tab, use the **Pair a Bus** card:
+   enter that ID and pick which bus record it should link to (add the bus first if it doesn't
+   exist yet). The Hub polls every ~4s and picks up the claim automatically — no restart needed.
+3. **If this Hub's disk is later wiped and reinstalled**, it'll show a *new* pairing ID — claim
+   that one against the *same* bus in Admin (the cloud rotates the api_key, so the old one on
+   the lost disk stops working), and every route/stop/content assigned to that bus re-downloads
+   automatically.
+
+If the cloud is offline or unreachable, none of this blocks anything — the Hub (paired or not)
+keeps working exactly as in Phase 1, offline-first; both agents just retry with backoff.
+
+Override the cloud location with `HUB_CLOUD_URL`/`HUB_CLOUD_HTTP` env vars (default
+`ws://localhost:4000/hub-sync`).
 
 ## Known Phase 1 simplifications (intentional, documented trade-offs)
 
@@ -82,13 +105,14 @@ background and never blocks anything the driver/conductor does.
   campaign is treated as having unlimited quota until the Phase 3 Pacing Engine exists.
 - **No sync engine, no cloud.** `synced` flags exist on every table for Phase 2 to use; the
   Hub never blocks on a network call because there isn't one yet.
-- **PIN model**: one shared numeric PIN per bus per day (spec's own stated default — flagged
-  there as an open question). Change `db/seed.js` or the `daily_pin` table if you want to
-  test per-person PINs instead.
+- **Device pairing model**: a persistent connect code (admin-set, not daily) pairs a phone once;
+  it then stays connected — via a token in the browser's `localStorage` — until it disconnects
+  or an admin disconnects every device on the bus. No per-action PIN prompts. See
+  `src/api/routes/auth.js` and `public/panel/app.js`.
 
 ## Deploying on the actual PC (once hardware is available)
 
-See `../DEPLOYMENT.md` for the full walkthrough (Windows prep, env vars, ESP32 flashing,
+See `../DEPLOYMENT.md` for the full walkthrough (Windows prep, pairing, ESP32 flashing,
 Windows service + kiosk, and an end-to-end test checklist). Short version:
 
 1. `npm install` (add `node-windows` too: `npm install node-windows`, Windows-only)
@@ -98,6 +122,9 @@ Windows service + kiosk, and an end-to-end test checklist). Short version:
    on crash, no login required)
 4. Put a shortcut to `scripts/start-kiosk.bat` in the Startup folder (`shell:startup`) so the
    Display View launches full-screen on every boot
+5. On first boot the Display View shows this Hub's pairing ID — read it off the kiosk screen and
+   claim it from Admin's "Pair a Bus" card (see "Pairing this Hub to the cloud" above); no
+   further action is needed at the PC itself
 
 ## Directory map
 
@@ -106,9 +133,9 @@ src/db/          SQLite schema + seed data
 src/transport/    mock + real serial transports, common interface, heartbeat watchdog
 src/engine/       trip lifecycle, playback/announcement composition, ad rotation
 src/realtime/     WebSocket state broadcast (spec 4.2 multi-session live state)
-src/sync/         cloud-lite sync agent (pulls route/content, reports trips/play_logs)
-src/api/routes/   trip actions, status, PIN auth, mock-only debug endpoints
-public/display/   kiosk Display View (route progress strip + ad/audio playback)
-public/panel/     phone Control Panel
+src/sync/         cloud-lite sync agent + pairingAgent.js (generates/polls this Hub's pairing ID)
+src/api/routes/   trip actions, status, phone connect/disconnect auth, pairing status, mock-only debug endpoints
+public/display/   kiosk Display View (pairing ID screen when unpaired; route progress strip + ad/audio playback once paired)
+public/panel/     phone Control Panel (connect-once device pairing, no PIN)
 public/sim/       ESP32 Simulator (mock mode only)
 ```

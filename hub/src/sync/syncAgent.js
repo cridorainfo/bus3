@@ -3,18 +3,17 @@ const fs = require('fs');
 const WebSocket = require('ws');
 const db = require('../db/db');
 const state = require('../engine/state');
-const { busId, getDeviceConfig, getRouteName } = require('../config/deviceConfig');
+const { getBusId, getApiKey, isPaired, getDeviceConfig, getRouteName } = require('../config/deviceConfig');
+const { CLOUD_WS_URL, CLOUD_HTTP_BASE } = require('../config/cloudConfig');
 
 // Cloud-lite sync (Phase 2 sample, spec Section 8 scaled down): the Hub stays fully offline-first
 // regardless of whether any of this succeeds. Every failure here is caught and retried — never
 // surfaced to the driver, matching the spec's "zero driver-facing failure surface" requirement.
-const CLOUD_WS_URL = process.env.HUB_CLOUD_URL || 'ws://localhost:4000/hub-sync';
-const CLOUD_HTTP_BASE = process.env.HUB_CLOUD_HTTP || CLOUD_WS_URL.replace(/^ws/, 'http').replace(/\/hub-sync\/?$/, '');
-const API_KEY = process.env.HUB_CLOUD_API_KEY || 'dev-demo-key';
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
 const REPORT_INTERVAL_MS = 15000;
+const PAIRING_CHECK_INTERVAL_MS = 5000;
 
 let ws = null;
 let reconnectDelay = RECONNECT_BASE_MS;
@@ -23,7 +22,17 @@ let pendingLogIds = [];
 let lastTripActive = false;
 
 function start() {
-  connect();
+  if (isPaired()) {
+    connect();
+  } else {
+    console.log('[syncAgent] not paired yet — see the Display View for this bus\'s pairing ID');
+  }
+  // Pairing can complete later (via pairingAgent.js's device-code flow) without a restart —
+  // check periodically and start connecting the moment it does.
+  setInterval(() => {
+    if (!ws && isPaired()) connect();
+  }, PAIRING_CHECK_INTERVAL_MS);
+
   setInterval(reportUp, REPORT_INTERVAL_MS);
 
   // Report promptly when a trip ends, rather than waiting out the full interval — cheap to
@@ -35,12 +44,18 @@ function start() {
   });
 }
 
+// Exported so pairing.js can kick off the very first connection immediately after a successful
+// pair, instead of waiting for the next periodic check.
+function connectIfPaired() {
+  if (!ws && isPaired()) connect();
+}
+
 function connect() {
   ws = new WebSocket(CLOUD_WS_URL);
 
   ws.on('open', () => {
     reconnectDelay = RECONNECT_BASE_MS;
-    ws.send(JSON.stringify({ type: 'hello', bus_id: busId, api_key: API_KEY }));
+    ws.send(JSON.stringify({ type: 'hello', bus_id: getBusId(), api_key: getApiKey() }));
     console.log(`[syncAgent] connected to cloud at ${CLOUD_WS_URL}`);
   });
 
@@ -61,6 +76,7 @@ function connect() {
   });
 
   ws.on('close', () => {
+    ws = null;
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
   });
@@ -69,10 +85,26 @@ function connect() {
 
 // --- Pull: cloud -> hub ---
 
-async function applySyncState(payload) {
-  const { route, stops, content_items: contentItems } = payload;
+const upsertStop = db.prepare(`
+  INSERT INTO stops (stop_id, route_id, name_ml, name_en, sequence_no, ads_enabled, announcement_template)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(stop_id) DO UPDATE SET name_ml = excluded.name_ml, name_en = excluded.name_en,
+    ads_enabled = excluded.ads_enabled, announcement_template = excluded.announcement_template
+`);
+const upsertRouteStop = db.prepare(`
+  INSERT INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)
+  ON CONFLICT(route_id, stop_id) DO UPDATE SET sequence_no = excluded.sequence_no
+`);
+const deleteRouteStop = db.prepare('DELETE FROM route_stops WHERE route_id = ? AND stop_id = ?');
 
-  if (route) {
+// A bus can be assigned more than one route (spec ask); the driver/conductor picks which one is
+// active locally (see select-route in api/routes/trip.js) — this just makes sure every assigned
+// route's stops/content are downloaded and ready, whichever one gets picked.
+async function applySyncState(payload) {
+  const { bus, routes, content_items: contentItems } = payload;
+  const incomingRouteIds = new Set((routes || []).map((r) => r.route_id));
+
+  for (const route of routes || []) {
     db.prepare(`
       INSERT INTO routes (route_id, name, name_ml, tier) VALUES (?, ?, ?, ?)
       ON CONFLICT(route_id) DO UPDATE SET name = excluded.name, name_ml = excluded.name_ml, tier = excluded.tier
@@ -81,35 +113,56 @@ async function applySyncState(payload) {
     // Stops are global (upserted by stop_id, never deleted here — other routes may still use
     // them); route_stops is what actually defines this route's membership/order, and is fully
     // reconciled to match the incoming list (rows for stops no longer on this route are unlinked).
-    const incomingIds = new Set(stops.map((s) => s.stop_id));
+    const incomingStopIds = new Set(route.stops.map((s) => s.stop_id));
     const localLinkedStopIds = db.prepare('SELECT stop_id FROM route_stops WHERE route_id = ?').all(route.route_id).map((r) => r.stop_id);
 
-    const upsertStop = db.prepare(`
-      INSERT INTO stops (stop_id, route_id, name_ml, name_en, sequence_no, ads_enabled, announcement_template)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(stop_id) DO UPDATE SET name_ml = excluded.name_ml, name_en = excluded.name_en,
-        ads_enabled = excluded.ads_enabled, announcement_template = excluded.announcement_template
-    `);
-    const upsertRouteStop = db.prepare(`
-      INSERT INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)
-      ON CONFLICT(route_id, stop_id) DO UPDATE SET sequence_no = excluded.sequence_no
-    `);
-    const deleteRouteStop = db.prepare('DELETE FROM route_stops WHERE route_id = ? AND stop_id = ?');
-
     db.transaction(() => {
-      for (const s of stops) {
+      for (const s of route.stops) {
         upsertStop.run(s.stop_id, route.route_id, s.name_ml, s.name_en, s.sequence_no, s.ads_enabled ? 1 : 0, s.announcement_template);
         upsertRouteStop.run(route.route_id, s.stop_id, s.sequence_no);
       }
       for (const stopId of localLinkedStopIds) {
-        if (!incomingIds.has(stopId)) deleteRouteStop.run(route.route_id, stopId);
+        if (!incomingStopIds.has(stopId)) deleteRouteStop.run(route.route_id, stopId);
       }
     })();
-
-    db.prepare('UPDATE device_config SET route_assigned = ? WHERE bus_id = ?').run(route.route_id, busId);
   }
-  // route === null means the cloud has nothing assigned yet (e.g. before the admin has acted) —
-  // leave whatever route the Hub already knows about untouched rather than wiping it out.
+
+  // Reconcile the local assigned_routes mirror to exactly match the incoming assignment set.
+  const localAssignedIds = db.prepare('SELECT route_id FROM assigned_routes').all().map((r) => r.route_id);
+  const insertAssigned = db.prepare('INSERT OR IGNORE INTO assigned_routes (route_id) VALUES (?)');
+  const deleteAssigned = db.prepare('DELETE FROM assigned_routes WHERE route_id = ?');
+  db.transaction(() => {
+    for (const routeId of incomingRouteIds) insertAssigned.run(routeId);
+    for (const routeId of localAssignedIds) {
+      if (!incomingRouteIds.has(routeId)) deleteAssigned.run(routeId);
+    }
+  })();
+
+  const busId = getBusId();
+
+  // If the currently-active route was unassigned and nothing's running, clear it so the driver
+  // picks again from what's left — but never disrupt a trip already in progress.
+  const cfgBefore = getDeviceConfig();
+  if (cfgBefore.route_assigned && !incomingRouteIds.has(cfgBefore.route_assigned) && !state.trip) {
+    db.prepare('UPDATE device_config SET route_assigned = NULL WHERE bus_id = ?').run(busId);
+  }
+
+  if (bus) {
+    db.prepare('UPDATE device_config SET reg_number = ?, friendly_name = ?, connect_code = ? WHERE bus_id = ?').run(
+      bus.reg_number,
+      bus.friendly_name || null,
+      bus.connect_code || null,
+      busId
+    );
+
+    // Admin's "Disconnect all devices" (spec: takes effect once the bus is next online) — bump
+    // is compared against what we last applied, so a repeated sync doesn't keep re-clearing.
+    if (bus.devices_disconnect_at && bus.devices_disconnect_at !== cfgBefore.devices_disconnect_last_applied) {
+      db.prepare('DELETE FROM paired_devices').run();
+      db.prepare('UPDATE device_config SET devices_disconnect_last_applied = ? WHERE bus_id = ?').run(bus.devices_disconnect_at, busId);
+      console.log('[syncAgent] admin disconnected all paired phones for this bus');
+    }
+  }
 
   for (const item of contentItems || []) {
     await ensureContentDownloaded(item);
@@ -119,7 +172,13 @@ async function applySyncState(payload) {
 
   const cfg = getDeviceConfig();
   state.update({
-    bus: { bus_id: cfg.bus_id, reg_number: cfg.reg_number, route_assigned: cfg.route_assigned, route_name: getRouteName(cfg.route_assigned) },
+    bus: {
+      bus_id: cfg.bus_id,
+      reg_number: cfg.reg_number,
+      friendly_name: cfg.friendly_name,
+      route_assigned: cfg.route_assigned,
+      route_name: getRouteName(cfg.route_assigned),
+    },
     contentVersion: Date.now(), // Panel/Display refetch stops/content on this change (not just route_id)
   });
 }
@@ -222,4 +281,4 @@ function markSynced() {
   }
 }
 
-module.exports = { start };
+module.exports = { start, connectIfPaired };

@@ -1,34 +1,50 @@
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../../db/db');
-const { busId } = require('../../config/deviceConfig');
+const { getDeviceConfig } = require('../../config/deviceConfig');
 
 const router = express.Router();
 
-function todayPin() {
-  const today = new Date().toISOString().slice(0, 10);
-  const row = db.prepare('SELECT pin FROM daily_pin WHERE bus_id = ? AND date = ?').get(busId, today);
-  return row ? row.pin : null;
+function currentConnectCode() {
+  const cfg = getDeviceConfig();
+  return cfg ? cfg.connect_code : null;
 }
 
-// Shared per-bus-per-day PIN (spec 7.1) — whoever's assigned to this bus today, driver or
-// conductor, uses the same short numeric PIN. Deliberately not per-person: keeps onboarding
-// as close to frictionless as pressing a button, per the spec's stated design goal.
-router.post('/verify-pin', (req, res) => {
-  const { pin } = req.body || {};
-  const valid = todayPin();
-  if (valid && pin === valid) return res.json({ ok: true });
-  return res.status(401).json({ ok: false, error: 'invalid_pin' });
+// One-time connect, not per-action: a phone enters the bus's connect code once (set/rotated by
+// admin via the cloud), gets a device_token, and stays paired — kept in the browser's
+// localStorage, not sessionStorage — until it disconnects (switching to a different bus) or an
+// admin disconnects every device on this bus (see syncAgent's devices_disconnect_at handling).
+router.post('/connect', (req, res) => {
+  const { code } = req.body || {};
+  const valid = currentConnectCode();
+  if (!valid || code !== valid) {
+    return res.status(401).json({ ok: false, error: 'invalid_code' });
+  }
+
+  const deviceToken = crypto.randomBytes(24).toString('hex');
+  db.prepare('INSERT INTO paired_devices (device_token, paired_at, last_seen_at) VALUES (?, datetime(\'now\'), datetime(\'now\'))').run(deviceToken);
+
+  res.json({ ok: true, device_token: deviceToken });
 });
 
-// Middleware for state-changing actions (start/end trip, corrections, mute — spec 7.1).
+// Self-service — used when a driver/conductor is switching to a different bus.
+router.post('/disconnect', (req, res) => {
+  const token = req.header('x-device-token') || (req.body && req.body.device_token);
+  if (token) db.prepare('DELETE FROM paired_devices WHERE device_token = ?').run(token);
+  res.json({ ok: true });
+});
+
+// Gates every state-changing trip action (start/end, direction, corrections, route switch).
 // Viewing status/identity never requires this.
-function requirePin(req, res, next) {
-  const pin = (req.body && req.body.pin) || req.header('x-pin');
-  const valid = todayPin();
-  if (!valid || pin !== valid) {
-    return res.status(401).json({ ok: false, error: 'invalid_pin' });
-  }
+function requireDevice(req, res, next) {
+  const token = req.header('x-device-token') || (req.body && req.body.device_token);
+  if (!token) return res.status(401).json({ ok: false, error: 'not_connected' });
+
+  const device = db.prepare('SELECT * FROM paired_devices WHERE device_token = ?').get(token);
+  if (!device) return res.status(401).json({ ok: false, error: 'not_connected' });
+
+  db.prepare("UPDATE paired_devices SET last_seen_at = datetime('now') WHERE device_token = ?").run(token);
   next();
 }
 
-module.exports = { router, requirePin };
+module.exports = { router, requireDevice };

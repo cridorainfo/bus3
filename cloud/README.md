@@ -14,27 +14,37 @@ npm start          # http://localhost:4000, admin UI at /admin/
 ```
 
 A demo bus (`HUB-DEV-01` / `KL07AX1234`, api key `dev-demo-key`) is pre-registered with no
-route assigned — matching the Hub's own Phase 1 seed — so the walkthrough of "add a route,
-assign it, watch the bus pick it up" works immediately against an already-running Hub
-(`../hub`, `HUB_TRANSPORT=mock npm start`).
+route assigned — matching the Hub's own dev-shortcut seed (`HUB_BUS_ID` env var) — so the
+walkthrough of "add a route, assign it, watch the bus pick it up" works immediately against an
+already-running Hub (`../hub`, `HUB_TRANSPORT=mock npm start`). For the real flow (no shared
+`dev-demo-key`), start an unpaired Hub instead, read the pairing ID off its Display View
+(`http://localhost:3000/display/`), and claim it against a bus using the **Pair a Bus** card in
+the Buses tab — see `../DEPLOYMENT.md`.
 
 ## What's here
 
-- **Admin page** (`/admin/`) — green/white, EN/ML display toggle in the topbar.
-  - **Buses**: add/assign-route/live status.
+- **Admin page** (`/admin/`) — green/white, both English and Malayalam names always shown.
+  - **Buses**: a **Pair a Bus** card links an unpaired Hub (which displays its own short pairing
+    ID, smart-TV style, on its Display View — nothing is ever typed at the Hub PC) to a bus
+    record here, by pairing ID. Below that, add a bus (with a friendly name), assign it **one or
+    more routes** (the driver/conductor picks the active one from their phone), see live status,
+    and manage its credentials: **Connect Code** (persistent, what a driver/conductor's phone
+    uses to connect — replaces the old daily-PIN idea) and **Disconnect All Devices** (frees the
+    bus up for a new driver/conductor, next time its Hub is online).
   - **Routes**: add a route (English + Malayalam name), then **find-or-link a stop** — stops are
     global, so searching for one already used by another route and linking it reuses its audio
-    instead of duplicating anything. Each stop row has an **Ads toggle**: on (and only once a
-    `stop_name_ad` clip has been uploaded for it) swaps that combined "stop name + sponsor" clip
-    in for the plain stop name during playback.
-  - **Content**: upload ad video/banner or audio segments — `chime`/`filler`/`outro` are global
-    (common to every announcement); `stop_name`/`stop_name_ad` are scoped to a specific stop via
-    the same search picker.
-- **REST API** (`/api/buses`, `/api/routes`, `/api/stops`, `/api/content`) — what the admin page calls.
+    instead of duplicating anything. Each stop's Ads status (on/off) is managed from Content >
+    Stop Names now, shown here as a read-only badge.
+  - **Content**: four sections — **Announcement Audio** (`chime`/`filler`/`outro`, global),
+    **Stop Names** (a searchable directory of every stop — upload the plain clip and/or an ad
+    clip per stop, and toggle which plays), **Banner Ads**, **Full-Screen Ads** (video/music).
+- **REST API** (`/api/buses`, `/api/routes`, `/api/stops`, `/api/content`, and the
+  unauthenticated `/api/pair/register`, `/api/pair/status/:id`, `/api/pair/claim` device-code
+  pairing exchange) — what the admin page and Hub installs call.
 - **`/hub-sync` WebSocket** — each bus's Hub connects here; admin actions that affect a bus's
-  effective state (route assignment, a linked/edited/reordered stop, an ads toggle, new content)
-  push an updated `sync_state` to it immediately if it's online, and the Hub reports its unsynced
-  trips/play_logs + live status back up on the same connection.
+  effective state (route/stop changes, ads toggle, new content, a connect-code rotation, a
+  "disconnect all devices") push an updated `sync_state` to it immediately if it's online, and
+  the Hub reports its unsynced trips/play_logs + live status back up on the same connection.
 
 ## Known simplifications
 

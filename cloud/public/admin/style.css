@@ -73,6 +73,8 @@ html, body {
   padding: 20px;
 }
 
+.pair-bus-card { border-color: var(--green-line); background: var(--green-light); }
+
 .form-inline {
   display: flex;
   flex-wrap: wrap;
@@ -126,15 +128,19 @@ input:focus, select:focus { outline: 2px solid var(--green-line); border-color: 
 
 .bus-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-.apikey {
+.credentials-wrap { flex-basis: 100%; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.cred-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.cred-label { color: var(--muted); min-width: 100px; }
+.cred-value {
   font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: 12px;
+  font-weight: 700;
   background: var(--green-light);
-  padding: 4px 8px;
-  border-radius: 6px;
   color: var(--green-dark);
-  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 1px;
 }
+.cred-sub { color: var(--muted); font-size: 12px; }
 
 /* --- Route card --- */
 .route-card-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
@@ -189,25 +195,28 @@ video.preview { max-height: 60px; border-radius: 8px; }
 
 .empty-state { color: var(--muted); font-size: 14px; padding: 24px 0; text-align: center; }
 
-/* --- Language toggle --- */
-.segmented-sm {
-  display: flex;
-  gap: 2px;
-  background: var(--green-light);
-  padding: 3px;
-  border-radius: 999px;
-}
-.segmented-sm .segment {
+/* --- Content sub-tabs --- */
+.subtabs { display: flex; gap: 4px; background: var(--green-light); padding: 4px; border-radius: 999px; width: fit-content; margin-bottom: 20px; }
+.subtab {
   border: none;
   background: transparent;
-  padding: 6px 14px;
+  padding: 8px 16px;
   border-radius: 999px;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--muted);
   cursor: pointer;
 }
-.segmented-sm .segment.active { background: var(--green); color: #fff; }
+.subtab.active { background: var(--green); color: #fff; }
+.subtab-panel { display: none; }
+.subtab-panel.active { display: block; }
+
+/* --- Bus friendly name + assigned-routes checklist --- */
+.bus-reg-sub { font-size: 12px; color: var(--muted); margin-top: -2px; }
+.bus-routes-wrap { flex-basis: 100%; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.bus-routes-list { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 8px; }
+.route-check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.route-check-row input { width: 16px; height: 16px; accent-color: var(--green); }
 
 /* --- Stop search / link picker --- */
 .stop-picker { position: relative; margin-top: 12px; }
@@ -267,6 +276,22 @@ video.preview { max-height: 60px; border-radius: 8px; }
   padding: 2px 8px;
   border-radius: 999px;
 }
+.also-used-badge.ads-on { color: var(--green-dark); background: var(--green-light); border-color: var(--green-line); font-weight: 700; }
+
+/* --- Stop Names directory --- */
+.stopname-row { display: block; }
+.stopname-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.stopname-clips {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.clip-slot { display: flex; flex-direction: column; gap: 8px; }
+.clip-slot .label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.clip-current { min-height: 24px; }
 
 /* --- Ads toggle switch --- */
 .ads-toggle-wrap { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }

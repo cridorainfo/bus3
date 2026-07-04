@@ -1,5 +1,5 @@
 const EventEmitter = require('events');
-const { busId, getDeviceConfig, getRouteName } = require('../config/deviceConfig');
+const { getDeviceConfig, getRouteName } = require('../config/deviceConfig');
 
 // Single in-memory live state, source of truth for what every connected phone/display sees
 // right now (spec 4.2: "multiple phones, one live state"). Persisted facts (trips, play_logs,
@@ -9,8 +9,8 @@ class HubState extends EventEmitter {
     super();
     const cfg = getDeviceConfig();
     this.bus = cfg
-      ? { bus_id: cfg.bus_id, reg_number: cfg.reg_number, route_assigned: cfg.route_assigned, route_name: getRouteName(cfg.route_assigned) }
-      : { bus_id: busId, reg_number: 'UNKNOWN', route_assigned: null, route_name: null };
+      ? { bus_id: cfg.bus_id, reg_number: cfg.reg_number, friendly_name: cfg.friendly_name, route_assigned: cfg.route_assigned, route_name: getRouteName(cfg.route_assigned) }
+      : { bus_id: null, reg_number: 'Not paired', friendly_name: null, route_assigned: null, route_name: null };
     this.trip = null; // { trip_id, route_id, start_time, current_stop_index, started_via }
     this.esp32 = { connected: false, lastHeartbeatAt: null };
     this.muted = false;
@@ -18,6 +18,7 @@ class HubState extends EventEmitter {
     this.lastFault = null;
     this.nowPlaying = null; // composed segment sequence currently pushed to the display
     this.contentVersion = 0; // bumped by syncAgent whenever route/stop/content data changes
+    this.pairingId = null; // set by pairingAgent while unpaired — Display View shows this on screen
   }
 
   snapshot() {
@@ -29,6 +30,7 @@ class HubState extends EventEmitter {
       lastFault: this.lastFault,
       nowPlaying: this.nowPlaying,
       contentVersion: this.contentVersion,
+      pairingId: this.pairingId,
     };
   }
 

@@ -6,14 +6,26 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="ad-area">
-    <video id="ad-video" muted playsinline></video>
-    <img id="ad-banner" alt="" />
-    <div id="idle-message">AdKerala</div>
+  <div id="pairing-screen">
+    <div class="pairing-box">
+      <div class="pairing-label">Pairing ID</div>
+      <div id="pairing-id-value">——————</div>
+      <p class="pairing-hint">Enter this in the Admin dashboard's "Pair a Bus" card to link this bus.</p>
+    </div>
   </div>
 
-  <div id="progress-strip">
-    <div id="stops-track"></div>
+  <div id="normal-view">
+    <div id="route-name-label"></div>
+
+    <div id="ad-area">
+      <video id="ad-video" muted playsinline></video>
+      <img id="ad-banner" alt="" />
+      <div id="idle-message">AdKerala</div>
+    </div>
+
+    <div id="progress-strip">
+      <div id="stops-track"></div>
+    </div>
   </div>
 
   <audio id="audio-player"></audio>

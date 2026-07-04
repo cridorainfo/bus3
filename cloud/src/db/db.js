@@ -2,10 +2,13 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const DB_PATH = process.env.CLOUD_DB_PATH || path.join(__dirname, '..', '..', 'data', 'cloud.db');
 
-const DB_PATH = process.env.CLOUD_DB_PATH || path.join(DATA_DIR, 'cloud.db');
+// Ensure the DB file's directory exists — matters both for the default local path and for a
+// custom CLOUD_DB_PATH pointing at a mounted volume (e.g. Railway's /data), which won't exist
+// on a brand-new volume until something creates it.
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
@@ -26,6 +29,10 @@ function ensureColumn(table, column, ddl) {
 
 ensureColumn('routes', 'name_ml', 'name_ml TEXT');
 ensureColumn('stops', 'ads_enabled', 'ads_enabled INTEGER NOT NULL DEFAULT 0');
+ensureColumn('buses', 'friendly_name', 'friendly_name TEXT');
+ensureColumn('buses', 'paired_at', 'paired_at TEXT');
+ensureColumn('buses', 'connect_code', 'connect_code TEXT');
+ensureColumn('buses', 'devices_disconnect_at', 'devices_disconnect_at TEXT');
 
 // One-time backfill: stops used to belong to exactly one route — carry forward any pre-existing
 // route_id/sequence_no into route_stops (idempotent, INSERT OR IGNORE).
@@ -45,5 +52,13 @@ db.prepare(`
   UPDATE stops SET announcement_template = 'chime,filler,stop_name,outro'
   WHERE announcement_template NOT LIKE '%filler%'
 `).run();
+
+// One-time backfill: a bus used to have exactly one assigned route (buses.route_id) — carry it
+// forward into bus_routes so existing assignments aren't lost now that a bus can run several.
+const legacyBusRoutes = db.prepare('SELECT bus_id, route_id FROM buses WHERE route_id IS NOT NULL').all();
+const insertBusRoute = db.prepare('INSERT OR IGNORE INTO bus_routes (bus_id, route_id) VALUES (?, ?)');
+db.transaction(() => {
+  for (const b of legacyBusRoutes) insertBusRoute.run(b.bus_id, b.route_id);
+})();
 
 module.exports = db;

@@ -1,20 +1,30 @@
-// Seeds one demo route + device identity so the system is runnable/demoable out of the box.
-// Real deployments replace this with data synced down from the cloud (Phase 2) and a real
-// one-time device provisioning step (spec 3.5).
+// Seeds a demo route so the system is runnable/demoable out of the box, and — only as an
+// explicit dev/testing shortcut — a device identity from env vars, bypassing the pairing flow
+// (src/api/routes/pairing.js). Real installs set no such env vars: device_config stays empty
+// ("unpaired") until an admin claims this Hub's self-generated pairing ID from the Admin
+// dashboard (see src/sync/pairingAgent.js, shown on the Display View).
 
 const db = require('./db');
 
 function seed() {
-  const busId = process.env.HUB_BUS_ID || 'HUB-DEV-01';
+  seedDeviceIdentityFromEnv();
+  seedDemoRoute();
+}
+
+function seedDeviceIdentityFromEnv() {
+  const busId = process.env.HUB_BUS_ID;
+  if (!busId) return; // no shortcut requested — stay unpaired until the device-code flow pairs it
 
   const existingDevice = db.prepare('SELECT bus_id FROM device_config WHERE bus_id = ?').get(busId);
-  if (!existingDevice) {
-    db.prepare(`
-      INSERT INTO device_config (bus_id, reg_number, route_assigned, hardware_version, esp32_vid, esp32_pid, last_sync_at)
-      VALUES (?, ?, ?, ?, ?, ?, NULL)
-    `).run(busId, process.env.HUB_REG_NUMBER || 'KL07AX1234', 'R1', 'v1', '10C4', 'EA60');
-  }
+  if (existingDevice) return;
 
+  db.prepare(`
+    INSERT INTO device_config (bus_id, reg_number, api_key, route_assigned, hardware_version, esp32_vid, esp32_pid, last_sync_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+  `).run(busId, process.env.HUB_REG_NUMBER || 'KL07AX1234', process.env.HUB_CLOUD_API_KEY || null, 'R1', 'v1', '10C4', 'EA60');
+}
+
+function seedDemoRoute() {
   const existingRoute = db.prepare('SELECT route_id FROM routes WHERE route_id = ?').get('R1');
   if (existingRoute) return; // already seeded
 
@@ -66,14 +76,7 @@ function seed() {
   insertContent.run('ad-video-demo-2', 'ad_video', '/media/ad-demo-2.mp4', 15, 'urban_standard', 'demo-advertiser-2', 'demo-campaign-video-2', 'R1', null, null, null);
   insertContent.run('house-psa-1', 'ad_video', '/media/house-psa.mp4', 10, null, null, null, 'R1', null, null, null);
 
-  const today = new Date().toISOString().slice(0, 10);
-  db.prepare('INSERT OR IGNORE INTO daily_pin (bus_id, date, pin) VALUES (?, ?, ?)').run(busId, today, '1234');
-  db.prepare(`INSERT INTO roster (name, role, bus_id, assigned_date) VALUES (?, ?, ?, ?)`)
-    .run('Demo Driver', 'driver', busId, today);
-  db.prepare(`INSERT INTO roster (name, role, bus_id, assigned_date) VALUES (?, ?, ?, ?)`)
-    .run('Demo Conductor', 'conductor', busId, today);
-
-  console.log(`[seed] Seeded demo route R1 (6 stops) and device ${busId}`);
+  console.log('[seed] Seeded demo route R1 (6 stops)');
 }
 
 module.exports = seed;

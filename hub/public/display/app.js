@@ -1,8 +1,14 @@
-// AdKerala Display View — kiosk, FullHD. Renders the route-progress strip from
-// current_stop_index (no GPS needed) and plays whatever the Hub pushes as "nowPlaying":
-// the composed announcement audio, sequentially, plus a screen ad (shown muted, since the
-// single aux output is reserved for the announcement voice — see hub/README.md).
+// AdKerala Display View — kiosk, FullHD. This is the Hub's only screen, so while unpaired it
+// shows the device's pairing ID (read-only — nothing is ever typed here) instead of the normal
+// view. Once paired: route name, the route-progress strip from current_stop_index (no GPS
+// needed), and whatever the Hub pushes as "nowPlaying" — the composed announcement audio,
+// sequentially, plus a screen ad (shown muted, since the single aux output is reserved for the
+// announcement voice — see hub/README.md).
 
+const pairingScreen = document.getElementById('pairing-screen');
+const pairingIdValue = document.getElementById('pairing-id-value');
+const normalView = document.getElementById('normal-view');
+const routeNameLabel = document.getElementById('route-name-label');
 const stopsTrack = document.getElementById('stops-track');
 const adVideo = document.getElementById('ad-video');
 const adBanner = document.getElementById('ad-banner');
@@ -12,6 +18,20 @@ const audioPlayer = document.getElementById('audio-player');
 let stopsCache = { routeId: null, contentVersion: -1, stops: [] };
 let audioQueue = [];
 let lastNowPlayingKey = null;
+
+// Unpaired: this is the Hub's only screen, so its pairing ID (a smart-TV-style device code)
+// shows here, big and read-only — nothing is ever typed at this kiosk PC. An admin reads the
+// ID and claims it from the Admin dashboard against a bus record.
+function renderPairingState(pairingId) {
+  const unpaired = !!pairingId;
+  pairingScreen.style.display = unpaired ? 'flex' : 'none';
+  normalView.style.display = unpaired ? 'none' : 'block';
+  if (unpaired) pairingIdValue.textContent = pairingId;
+}
+
+function renderRouteName(bus) {
+  routeNameLabel.textContent = bus && bus.route_name ? bus.route_name : '';
+}
 
 function renderProgressStrip(trip) {
   stopsTrack.innerHTML = '';
@@ -117,8 +137,12 @@ function connect() {
   ws.onmessage = async (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type !== 'state') return;
-    const { trip, nowPlaying, contentVersion } = msg.payload;
+    const { bus, trip, nowPlaying, contentVersion, pairingId } = msg.payload;
 
+    renderPairingState(pairingId);
+    if (pairingId) return; // nothing else to render while showing the pairing screen
+
+    renderRouteName(bus);
     await ensureStopsLoaded(trip, contentVersion);
     renderProgressStrip(trip);
     handleNowPlaying(nowPlaying);

@@ -5,14 +5,51 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- route_assigned means "the route currently selected as active by the driver/conductor,
+-- locally" — not "what the admin assigned." The set of routes the admin has assigned to this
+-- bus (which the local route picker offers) lives in assigned_routes below.
+--
+-- This table having zero rows means "unpaired" — a fresh/reinstalled Hub with no identity yet.
+-- Pairing (src/sync/pairingAgent.js) is what creates this row: the Hub generates and displays
+-- its own pairing ID (see pending_pairing below), an admin claims it from the Admin dashboard
+-- against a real bus record, and the Hub polls the cloud until that claim shows up.
 CREATE TABLE IF NOT EXISTS device_config (
-    bus_id            TEXT PRIMARY KEY,
-    reg_number        TEXT NOT NULL,
-    route_assigned    TEXT,
-    hardware_version  TEXT,
-    esp32_vid         TEXT,
-    esp32_pid         TEXT,
-    last_sync_at      TEXT
+    bus_id                          TEXT PRIMARY KEY,
+    reg_number                      TEXT NOT NULL,
+    friendly_name                   TEXT,
+    api_key                         TEXT,
+    route_assigned                  TEXT,
+    hardware_version                TEXT,
+    esp32_vid                       TEXT,
+    esp32_pid                       TEXT,
+    last_sync_at                    TEXT,
+    connect_code                    TEXT,    -- synced from cloud; what a phone's connect screen checks against
+    devices_disconnect_last_applied TEXT     -- bookkeeping so a repeated sync doesn't re-clear paired_devices
+);
+
+-- Holds the Hub's self-generated pairing ID while waiting to be claimed (kept stable across
+-- restarts rather than regenerating each boot). Separate from device_config, whose presence
+-- means "already paired" — a single row, cleared once claimed.
+CREATE TABLE IF NOT EXISTS pending_pairing (
+    device_pairing_id  TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Phones that have connected to this bus's Control Panel and stay paired until they disconnect
+-- (switching to another bus) or an admin disconnects everyone (see devices_disconnect_at
+-- handling in src/sync/syncAgent.js) — replaces asking for a PIN on every action.
+CREATE TABLE IF NOT EXISTS paired_devices (
+    device_token  TEXT PRIMARY KEY,
+    paired_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at  TEXT
+);
+
+-- Local mirror of the cloud's bus_routes for this bus — synced down by syncAgent, fully
+-- reconciled on every sync_state (rows not in the latest incoming set are removed). The phone
+-- Control Panel's route picker reads from here; switching the active route never needs the
+-- cloud, since everything it could pick is already downloaded.
+CREATE TABLE IF NOT EXISTS assigned_routes (
+    route_id  TEXT PRIMARY KEY REFERENCES routes(route_id)
 );
 
 CREATE TABLE IF NOT EXISTS routes (
@@ -133,13 +170,6 @@ CREATE TABLE IF NOT EXISTS roster (
     role           TEXT NOT NULL, -- driver | conductor
     bus_id         TEXT REFERENCES device_config(bus_id),
     assigned_date  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS daily_pin (
-    bus_id   TEXT NOT NULL,
-    date     TEXT NOT NULL,
-    pin      TEXT NOT NULL,
-    PRIMARY KEY (bus_id, date)
 );
 
 CREATE TABLE IF NOT EXISTS issues (

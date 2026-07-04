@@ -9,17 +9,18 @@ function pushToBusesOnStop(stopId) {
 }
 
 // Search across every stop, regardless of which route(s) it's linked to — this is what backs
-// the Admin's "find or link a stop" flow (spec ask: reuse a stop + its recorded audio across
-// routes instead of duplicating both).
+// the Admin's "find or link a stop" flow, and also the Stop Names directory (empty `q` browses
+// every stop, so a stop created while building a route shows up here with no extra step).
 router.get('/search', (req, res) => {
   const q = (req.query.q || '').trim();
   const like = `%${q}%`;
+  const limit = q ? 25 : 200; // browsing the full directory allows more than a narrow search
   const rows = db
     .prepare(`
       SELECT * FROM stops
       WHERE name_ml LIKE ? OR name_en LIKE ?
       ORDER BY name_en, name_ml
-      LIMIT 25
+      LIMIT ${limit}
     `)
     .all(like, like);
 

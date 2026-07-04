@@ -8,8 +8,10 @@
 </head>
 <body>
   <header id="identity-banner">
-    <div id="reg-number">–</div>
+    <div id="bus-name">–</div>
+    <div id="reg-number-sub"></div>
     <div id="route-name">–</div>
+    <button id="btn-disconnect" class="disconnect-link" style="display:none">Disconnect from this bus</button>
   </header>
 
   <main id="screens">
@@ -22,6 +24,8 @@
         <div class="label">Current stop</div>
         <div id="current-stop-name">–</div>
       </div>
+      <div class="label">Route</div>
+      <select id="route-picker" class="route-picker"></select>
       <div class="label">Direction</div>
       <div id="direction-toggle" class="segmented">
         <button class="segment active" data-direction="going">Going</button>
@@ -57,9 +61,10 @@
     <button class="tab" data-screen="screen-issue">Report</button>
   </nav>
 
-  <div id="pin-overlay" class="overlay hidden">
+  <div id="connect-overlay" class="overlay hidden">
     <div class="pin-box">
-      <div class="label">Enter PIN</div>
+      <div class="label">Connect to this bus</div>
+      <p class="connect-hint">Enter the connect code from your depot coordinator. You'll only need to do this once — this phone stays connected until you disconnect or switch buses.</p>
       <div id="pin-display">— — — —</div>
       <div class="keypad">
         <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>

@@ -27,6 +27,10 @@ function ensureColumn(table, column, ddl) {
 ensureColumn('trips', 'direction', "direction TEXT NOT NULL DEFAULT 'going'");
 ensureColumn('routes', 'name_ml', 'name_ml TEXT');
 ensureColumn('stops', 'ads_enabled', 'ads_enabled INTEGER NOT NULL DEFAULT 0');
+ensureColumn('device_config', 'friendly_name', 'friendly_name TEXT');
+ensureColumn('device_config', 'api_key', 'api_key TEXT');
+ensureColumn('device_config', 'connect_code', 'connect_code TEXT');
+ensureColumn('device_config', 'devices_disconnect_last_applied', 'devices_disconnect_last_applied TEXT');
 
 // One-time backfill: stops used to belong to exactly one route (stops.route_id/sequence_no).
 // Now that ordering lives in route_stops, carry forward any stop that predates this change and
@@ -47,5 +51,13 @@ db.prepare(`
   UPDATE stops SET announcement_template = 'chime,filler,stop_name,outro'
   WHERE announcement_template NOT LIKE '%filler%'
 `).run();
+
+// One-time backfill: this bus used to have exactly one route (device_config.route_assigned).
+// Carry it forward into assigned_routes so the local route picker has something to show before
+// the first sync from the cloud arrives.
+const cfg = db.prepare('SELECT route_assigned FROM device_config LIMIT 1').get();
+if (cfg && cfg.route_assigned) {
+  db.prepare('INSERT OR IGNORE INTO assigned_routes (route_id) VALUES (?)').run(cfg.route_assigned);
+}
 
 module.exports = db;

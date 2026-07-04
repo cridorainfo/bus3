@@ -1,16 +1,24 @@
 // AdKerala Control Panel — used by either driver or conductor (spec 7.1). Tab bar navigates
-// between screens; a shared per-bus-per-day PIN gates only the actions that change state
-// (start/end trip, corrections, mute) — viewing status/identity never requires it.
+// between screens; a one-time "connect to this bus" code gates the actions that change state
+// (start/end trip, route/direction, corrections, mute) — once connected, the phone stays
+// connected (localStorage, survives closing the browser) until it disconnects or an admin
+// disconnects every device on this bus. Viewing status/identity never requires it.
+
+const DEVICE_TOKEN_KEY = 'adkerala_device_token';
 
 let latestState = null;
 let stopsCache = { routeId: null, contentVersion: -1, stops: [] };
-let pendingAction = null;
-let pinBuffer = '';
+let routesCache = { contentVersion: -1, routes: [] };
+let pendingRetry = null;
+let codeBuffer = '';
 let selectedDirection = localStorage.getItem('adkerala_direction') === 'return' ? 'return' : 'going';
 
 const els = {
-  regNumber: document.getElementById('reg-number'),
+  busName: document.getElementById('bus-name'),
+  regNumberSub: document.getElementById('reg-number-sub'),
   routeName: document.getElementById('route-name'),
+  routePicker: document.getElementById('route-picker'),
+  disconnectBtn: document.getElementById('btn-disconnect'),
   esp32Pill: document.getElementById('esp32-pill'),
   netPill: document.getElementById('net-pill'),
   currentStopName: document.getElementById('current-stop-name'),
@@ -19,7 +27,7 @@ const els = {
   muteBtn: document.getElementById('btn-mute-toggle'),
   issueText: document.getElementById('issue-text'),
   issueHint: document.getElementById('issue-hint'),
-  pinOverlay: document.getElementById('pin-overlay'),
+  connectOverlay: document.getElementById('connect-overlay'),
   pinDisplay: document.getElementById('pin-display'),
   pinError: document.getElementById('pin-error'),
 };
@@ -34,77 +42,134 @@ document.querySelectorAll('.tab').forEach((tab) => {
   });
 });
 
-// --- PIN overlay ---
-function showPinOverlay(onVerified) {
-  pendingAction = onVerified;
-  pinBuffer = '';
+// --- Device pairing (connect once, stay connected) ---
+function deviceToken() {
+  return localStorage.getItem(DEVICE_TOKEN_KEY);
+}
+
+function updateDisconnectVisibility() {
+  els.disconnectBtn.style.display = deviceToken() ? 'inline-block' : 'none';
+}
+
+function showConnectOverlay(onConnected) {
+  pendingRetry = onConnected || null;
+  codeBuffer = '';
   els.pinError.textContent = '';
-  renderPinBuffer();
-  els.pinOverlay.classList.remove('hidden');
+  renderCodeBuffer();
+  els.connectOverlay.classList.remove('hidden');
 }
 
-function hidePinOverlay() {
-  els.pinOverlay.classList.add('hidden');
-  pendingAction = null;
+function hideConnectOverlay() {
+  els.connectOverlay.classList.add('hidden');
+  pendingRetry = null;
 }
 
-function renderPinBuffer() {
+function renderCodeBuffer() {
   const slots = ['—', '—', '—', '—'];
-  for (let i = 0; i < pinBuffer.length; i++) slots[i] = '•';
+  for (let i = 0; i < codeBuffer.length; i++) slots[i] = '•';
   els.pinDisplay.textContent = slots.join(' ');
 }
 
 document.querySelectorAll('.keypad button').forEach((btn) => {
   btn.addEventListener('click', () => {
     const key = btn.dataset.key;
-    if (key === 'clear') pinBuffer = '';
-    else if (key === 'back') pinBuffer = pinBuffer.slice(0, -1);
-    else if (pinBuffer.length < 4) pinBuffer += key;
-    renderPinBuffer();
-    if (pinBuffer.length === 4) submitPin();
+    if (key === 'clear') codeBuffer = '';
+    else if (key === 'back') codeBuffer = codeBuffer.slice(0, -1);
+    else if (codeBuffer.length < 4) codeBuffer += key;
+    renderCodeBuffer();
+    if (codeBuffer.length === 4) submitConnectCode();
   });
 });
 
-async function submitPin() {
-  const pin = pinBuffer;
-  const res = await fetch('/api/auth/verify-pin', {
+async function submitConnectCode() {
+  const code = codeBuffer;
+  const res = await fetch('/api/auth/connect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pin }),
+    body: JSON.stringify({ code }),
   });
   if (res.ok) {
-    sessionStorage.setItem('adkerala_pin', pin);
-    const action = pendingAction;
-    hidePinOverlay();
-    if (action) action(pin);
+    const data = await res.json();
+    localStorage.setItem(DEVICE_TOKEN_KEY, data.device_token);
+    updateDisconnectVisibility();
+    const retry = pendingRetry;
+    hideConnectOverlay();
+    if (retry) retry();
   } else {
-    els.pinError.textContent = 'Wrong PIN, try again';
-    pinBuffer = '';
-    renderPinBuffer();
+    els.pinError.textContent = 'Wrong code, try again';
+    codeBuffer = '';
+    renderCodeBuffer();
   }
 }
 
-// Runs a state-changing action with the cached PIN, falling back to the keypad if there is
-// none cached yet or the server rejects it (e.g. the day rolled over to a new PIN).
+els.disconnectBtn.addEventListener('click', async () => {
+  if (!confirm('Disconnect this phone from this bus? Use this when switching to a different bus.')) return;
+  await fetch('/api/auth/disconnect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-device-token': deviceToken() || '' },
+  });
+  localStorage.removeItem(DEVICE_TOKEN_KEY);
+  updateDisconnectVisibility();
+  showConnectOverlay();
+});
+
+// Runs a state-changing action, prompting to connect first if this phone never has, and again
+// if the server rejects the stored token (disconnected by an admin, or another device took over).
 async function runProtected(fn) {
-  const cached = sessionStorage.getItem('adkerala_pin');
-  if (cached) {
-    const res = await fn(cached);
-    if (res && res.status === 401) {
-      sessionStorage.removeItem('adkerala_pin');
-      showPinOverlay((pin) => fn(pin));
-    }
+  if (!deviceToken()) {
+    showConnectOverlay(() => runProtected(fn));
     return;
   }
-  showPinOverlay((pin) => fn(pin));
+  const res = await fn();
+  if (res && res.status === 401) {
+    localStorage.removeItem(DEVICE_TOKEN_KEY);
+    updateDisconnectVisibility();
+    showConnectOverlay(() => runProtected(fn));
+  }
+  return res;
 }
 
 function postJson(url, body) {
   return fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json', 'x-device-token': deviceToken() || '' },
+    body: JSON.stringify(body || {}),
   });
+}
+
+// --- Route picker — a bus can be assigned more than one route; switching which is active is
+// a purely local decision (no cloud round-trip), locked once a trip is active. ---
+els.routePicker.addEventListener('change', () => {
+  const routeId = els.routePicker.value;
+  if (!routeId) return;
+  runProtected(async () => {
+    const res = await postJson('/api/trip/select-route', { route_id: routeId });
+    if (!res.ok && res.status !== 401) renderRoutePicker(latestState); // revert on failure (e.g. trip just started elsewhere)
+    return res;
+  });
+});
+
+async function ensureRoutesLoaded(contentVersion) {
+  if (routesCache.contentVersion === contentVersion) return;
+  const res = await fetch('/api/trip/routes');
+  const data = await res.json();
+  routesCache = { contentVersion, routes: data.routes || [] };
+}
+
+function renderRoutePicker(state) {
+  const tripActive = !!state.trip;
+  if (routesCache.routes.length === 0) {
+    els.routePicker.innerHTML = '<option value="">No routes assigned</option>';
+  } else {
+    els.routePicker.innerHTML = routesCache.routes
+      .map((r) => `<option value="${r.route_id}" ${r.route_id === state.bus.route_assigned ? 'selected' : ''}>${escapeAttr(r.name)}${r.name_ml ? ' · ' + escapeAttr(r.name_ml) : ''}</option>`)
+      .join('');
+  }
+  els.routePicker.disabled = tripActive || routesCache.routes.length === 0;
+}
+
+function escapeAttr(str) {
+  return String(str ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 }
 
 // --- Direction toggle ("Going" / "Coming Back") — locked once a trip is active, since a
@@ -132,16 +197,16 @@ function renderDirectionToggle() {
 
 // --- Actions ---
 document.getElementById('btn-start-trip').addEventListener('click', () => {
-  runProtected((pin) => postJson('/api/trip/start', { pin, direction: selectedDirection }));
+  runProtected(() => postJson('/api/trip/start', { direction: selectedDirection }));
 });
 
 document.getElementById('btn-end-trip').addEventListener('click', () => {
-  runProtected((pin) => postJson('/api/trip/end', { pin }));
+  runProtected(() => postJson('/api/trip/end'));
 });
 
 els.muteBtn.addEventListener('click', () => {
   const nextMuted = !(latestState && latestState.muted);
-  runProtected((pin) => postJson('/api/trip/mute', { pin, muted: nextMuted }));
+  runProtected(() => postJson('/api/trip/mute', { muted: nextMuted }));
 });
 
 document.getElementById('btn-submit-issue').addEventListener('click', async () => {
@@ -157,7 +222,9 @@ document.getElementById('btn-submit-issue').addEventListener('click', async () =
 
 // --- Rendering ---
 function renderIdentity(state) {
-  els.regNumber.textContent = state.bus.reg_number || '—';
+  const hasFriendlyName = !!state.bus.friendly_name;
+  els.busName.textContent = hasFriendlyName ? state.bus.friendly_name : (state.bus.reg_number || '—');
+  els.regNumberSub.textContent = hasFriendlyName ? state.bus.reg_number || '' : '';
   els.routeName.textContent = state.bus.route_assigned ? (state.bus.route_name || `Route ${state.bus.route_assigned}`) : 'No route assigned';
 }
 
@@ -197,7 +264,7 @@ function renderStopList(state) {
     const btn = document.createElement('button');
     btn.textContent = 'Jump';
     btn.addEventListener('click', () => {
-      runProtected((pin) => postJson('/api/trip/jump', { pin, index: idx }));
+      runProtected(() => postJson('/api/trip/jump', { index: idx }));
     });
     row.appendChild(btn);
     els.stopList.appendChild(row);
@@ -221,15 +288,19 @@ async function ensureStopsLoaded(trip, contentVersion) {
 async function applyState(state) {
   latestState = state;
   await ensureStopsLoaded(state.trip, state.contentVersion);
+  await ensureRoutesLoaded(state.contentVersion);
   renderIdentity(state);
   renderStatusPills(state);
   renderTrip(state);
   renderStopList(state);
   renderMute(state);
   renderDirectionToggle();
+  renderRoutePicker(state);
 }
 
 // --- Initial load + live updates ---
+updateDisconnectVisibility();
+if (!deviceToken()) showConnectOverlay(); // prompt right away rather than waiting for the first tap
 fetch('/api/trip/state').then((r) => r.json()).then(applyState);
 
 function connect() {

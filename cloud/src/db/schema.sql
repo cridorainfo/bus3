@@ -52,19 +52,52 @@ CREATE TABLE IF NOT EXISTS content_items (
 
 -- Bus Management (spec 12) + live status fields, updated in near-real-time by the Hub's sync
 -- agent while connected (spec "Fleet Health" light version for this sample).
+-- route_id here is a read-only mirror of whichever route the bus is actively running right now
+-- (set by the live-status report) — the admin's *assignment* of routes to a bus lives in
+-- bus_routes below, since a bus can now run more than one route.
 CREATE TABLE IF NOT EXISTS buses (
-    bus_id               TEXT PRIMARY KEY,
-    reg_number           TEXT NOT NULL,
-    api_key              TEXT NOT NULL UNIQUE,
-    tier                 TEXT DEFAULT 'rural',
-    hardware_version     TEXT,
-    route_id             TEXT REFERENCES routes(route_id),
-    created_at           TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at         TEXT,
-    esp32_connected      INTEGER NOT NULL DEFAULT 0,
-    trip_active          INTEGER NOT NULL DEFAULT 0,
-    current_stop_index   INTEGER,
-    current_direction    TEXT
+    bus_id                    TEXT PRIMARY KEY,
+    reg_number                TEXT NOT NULL,
+    friendly_name             TEXT,
+    api_key                   TEXT NOT NULL UNIQUE,
+    tier                      TEXT DEFAULT 'rural',
+    hardware_version          TEXT,
+    route_id                  TEXT REFERENCES routes(route_id),
+    created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at              TEXT,
+    esp32_connected           INTEGER NOT NULL DEFAULT 0,
+    trip_active               INTEGER NOT NULL DEFAULT 0,
+    current_stop_index        INTEGER,
+    current_direction         TEXT,
+    -- Last time this bus was (re)paired via a device pairing ID claim — see pending_pairings
+    -- below. Rotates api_key on every claim, so a lost/wiped Hub disk's old key stops working
+    -- the moment the replacement Hub is paired.
+    paired_at                 TEXT,
+    -- Persistent phone connect code (replaces the old daily_pin concept) + a bumped timestamp
+    -- that tells every paired phone to disconnect the next time the bus's Hub is online.
+    connect_code              TEXT,
+    devices_disconnect_at     TEXT
+);
+
+-- Device-code pairing (spec: the Hub generates and displays its own short ID; an admin reads
+-- it off the bus's screen and claims it against a bus record here — no typing ever happens at
+-- the unattended, keyboard-less Hub PC). A pending row with no claimed_bus_id is just waiting;
+-- the Hub polls GET /api/pair/status/:id until one shows up.
+CREATE TABLE IF NOT EXISTS pending_pairings (
+    device_pairing_id  TEXT PRIMARY KEY,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    claimed_bus_id      TEXT REFERENCES buses(bus_id),
+    claimed_api_key     TEXT,
+    claimed_at          TEXT
+);
+
+-- Which routes a bus is allowed to run. The driver/conductor picks the active one locally on
+-- the Hub (device_config.route_assigned) from whatever's in here for their bus — no cloud
+-- round-trip needed to switch, since all assigned routes are already synced down.
+CREATE TABLE IF NOT EXISTS bus_routes (
+    bus_id    TEXT NOT NULL REFERENCES buses(bus_id),
+    route_id  TEXT NOT NULL REFERENCES routes(route_id),
+    PRIMARY KEY (bus_id, route_id)
 );
 
 -- Landing zone for what each bus reports up (spec 8). hub_trip_id/hub_log_id are the Hub's own
@@ -105,5 +138,7 @@ CREATE INDEX IF NOT EXISTS idx_route_stops_stop ON route_stops(stop_id);
 CREATE INDEX IF NOT EXISTS idx_content_items_route ON content_items(route_id);
 CREATE INDEX IF NOT EXISTS idx_content_items_stop ON content_items(stop_id);
 CREATE INDEX IF NOT EXISTS idx_buses_route ON buses(route_id);
+CREATE INDEX IF NOT EXISTS idx_bus_routes_bus ON bus_routes(bus_id);
+CREATE INDEX IF NOT EXISTS idx_bus_routes_route ON bus_routes(route_id);
 CREATE INDEX IF NOT EXISTS idx_trips_bus ON trips(bus_id);
 CREATE INDEX IF NOT EXISTS idx_play_logs_bus ON play_logs(bus_id);
