@@ -38,9 +38,15 @@ the Buses tab — see `../DEPLOYMENT.md`.
   - **Content**: four sections — **Announcement Audio** (`chime`/`filler`/`outro`, global),
     **Stop Names** (a searchable directory of every stop — upload the plain clip and/or an ad
     clip per stop, and toggle which plays), **Banner Ads**, **Full-Screen Ads** (video/music).
-- **REST API** (`/api/buses`, `/api/routes`, `/api/stops`, `/api/content`, and the
-  unauthenticated `/api/pair/register`, `/api/pair/status/:id`, `/api/pair/claim` device-code
-  pairing exchange) — what the admin page and Hub installs call.
+  - **Updates**: upload a Hub *software* release (a versioned zip built by
+    `hub/scripts/build-release.js`) and **Publish** it when ready — opted-in buses
+    (`hub/README.md` "Auto-updates") check for it, download and verify it in the background, and
+    apply it themselves the next time they're idle. Staying **Staged** (not yet published) lets
+    you hold a release back before rolling it out fleet-wide.
+- **REST API** (`/api/buses`, `/api/routes`, `/api/stops`, `/api/content`, the unauthenticated
+  `/api/pair/register`, `/api/pair/status/:id`, `/api/pair/claim` device-code pairing exchange,
+  and `/api/hub-releases` for the Hub software update mechanism) — what the admin page and Hub
+  installs call.
 - **`/hub-sync` WebSocket** — each bus's Hub connects here; admin actions that affect a bus's
   effective state (route/stop changes, ads toggle, new content, a connect-code rotation, a
   "disconnect all devices") push an updated `sync_state` to it immediately if it's online, and

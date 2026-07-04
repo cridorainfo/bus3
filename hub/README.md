@@ -126,16 +126,61 @@ Windows service + kiosk, and an end-to-end test checklist). Short version:
    claim it from Admin's "Pair a Bus" card (see "Pairing this Hub to the cloud" above); no
    further action is needed at the PC itself
 
+## Auto-updates (opt-in)
+
+By default, getting a new Hub feature/fix onto a bus PC is manual: copy the new `hub/` folder
+over, `npm install`, restart the service (per "Deploying on the actual PC" above). For a fleet of
+more than a couple of buses, that stops scaling — this is the opt-in mechanism for the cloud to
+push a new Hub *version* out, the same way it already pushes routes/stops/content.
+
+**Design**: a newer release is downloaded and checksum-verified in the background
+(`src/sync/updateAgent.js`), completely without touching the live running app. It only gets
+swapped in the next time the bus is idle (no active trip) — never mid-route — and the swap
+itself is a plain folder rename, so the previous version is kept as a fallback. If a bad release
+fails to even start 3 times in a row, `src/bootGuard.js` — required as the very first line of
+`server.js`, so it catches a crash anywhere during boot — automatically swaps the previous good
+version back in and restarts. No one needs to physically visit an unattended kiosk PC to recover
+from a bad rollout.
+
+This is entirely off by default: everything above only activates if `HUB_INSTALL_ROOT` is set,
+which only happens if you've explicitly opted in (below). A plain `npm start` dev checkout is
+completely unaffected.
+
+**Cutting a release:**
+1. Bump the `version` field in `hub/package.json` and test your changes locally.
+2. `node scripts/build-release.js` — packages the whole `hub/` folder (including
+   `node_modules/` — run this on a machine matching your bus PCs' architecture, since
+   `better-sqlite3`/`serialport` are native modules) into `dist/hub-release-<version>.zip` and
+   prints its sha256.
+3. In the cloud's Admin (`/admin/`), **Updates** tab: upload that zip with the matching version
+   number, then **Publish** it when you're ready for buses to pick it up. Uploading alone doesn't
+   roll it out — it stays **Staged** until published, so you can hold a release back if needed.
+
+**Opting a bus in** (one-time, per bus — this changes where the Hub's files live on disk):
+```
+cd hub\scripts
+node setup-auto-update.js C:\AdKerala
+```
+This moves the current install into `C:\AdKerala\hub\` (with `data\`, containing the live
+database and synced content, pulled out to `C:\AdKerala\data\` so it survives every future
+update) and prints the persistent environment variables to add
+(`HUB_INSTALL_ROOT`/`HUB_DB_PATH`/`HUB_ASSETS_DIR`) plus the `install-service.js` re-run needed
+to point the Windows service at the new location. See `../DEPLOYMENT.md` Part 2.3 for where
+those env vars live alongside the ones you've already set.
+
 ## Directory map
 
 ```
+src/bootGuard.js  crash-loop detection + automatic rollback (auto-updates only; required first in server.js)
 src/db/          SQLite schema + seed data
 src/transport/    mock + real serial transports, common interface, heartbeat watchdog
 src/engine/       trip lifecycle, playback/announcement composition, ad rotation
 src/realtime/     WebSocket state broadcast (spec 4.2 multi-session live state)
-src/sync/         cloud-lite sync agent + pairingAgent.js (generates/polls this Hub's pairing ID)
+src/sync/         cloud-lite sync agent + pairingAgent.js (bus pairing ID) + updateAgent.js (Hub software auto-update)
 src/api/routes/   trip actions, status, phone connect/disconnect auth, pairing status, mock-only debug endpoints
 public/display/   kiosk Display View (pairing ID screen when unpaired; route progress strip + ad/audio playback once paired)
 public/panel/     phone Control Panel (connect-once device pairing, no PIN)
 public/sim/       ESP32 Simulator (mock mode only)
+scripts/build-release.js       packages hub/ into a release zip for Admin's Updates tab
+scripts/setup-auto-update.js   one-time, opt-in: moves this install into the auto-update layout
 ```

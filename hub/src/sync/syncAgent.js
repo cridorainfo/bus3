@@ -5,6 +5,7 @@ const db = require('../db/db');
 const state = require('../engine/state');
 const { getBusId, getApiKey, isPaired, getDeviceConfig, getRouteName } = require('../config/deviceConfig');
 const { CLOUD_WS_URL, CLOUD_HTTP_BASE } = require('../config/cloudConfig');
+const { ASSETS_DIR } = require('../config/paths');
 
 // Cloud-lite sync (Phase 2 sample, spec Section 8 scaled down): the Hub stays fully offline-first
 // regardless of whether any of this succeeds. Every failure here is caught and retried — never
@@ -20,6 +21,7 @@ let reconnectDelay = RECONNECT_BASE_MS;
 let pendingTripIds = [];
 let pendingLogIds = [];
 let lastTripActive = false;
+let pendingUnpair = false; // admin disconnected this bus while a trip was active — see handleUnpaired below
 
 function start() {
   if (isPaired()) {
@@ -28,9 +30,13 @@ function start() {
     console.log('[syncAgent] not paired yet — see the Display View for this bus\'s pairing ID');
   }
   // Pairing can complete later (via pairingAgent.js's device-code flow) without a restart —
-  // check periodically and start connecting the moment it does.
+  // check periodically and start connecting the moment it does. Also guards against a second,
+  // independent reconnect path from the one in ws.on('close') below: this fires on its own
+  // schedule regardless of *why* ws is currently null, so it needs the same pendingUnpair check
+  // — otherwise it'll happily reconnect with credentials the cloud already invalidated while
+  // waiting for an active trip to end.
   setInterval(() => {
-    if (!ws && isPaired()) connect();
+    if (!ws && isPaired() && !pendingUnpair) connect();
   }, PAIRING_CHECK_INTERVAL_MS);
 
   setInterval(reportUp, REPORT_INTERVAL_MS);
@@ -39,7 +45,13 @@ function start() {
   // do via the existing state EventEmitter, no new coupling between tripEngine and sync.
   state.on('change', (snapshot) => {
     const tripActiveNow = !!snapshot.trip;
-    if (lastTripActive && !tripActiveNow) reportUp();
+    if (lastTripActive && !tripActiveNow) {
+      reportUp();
+      if (pendingUnpair) {
+        pendingUnpair = false;
+        performUnpair();
+      }
+    }
     lastTripActive = tripActiveNow;
   });
 }
@@ -51,15 +63,30 @@ function connectIfPaired() {
 }
 
 function connect() {
-  ws = new WebSocket(CLOUD_WS_URL);
+  // Reentrancy guard: two independent triggers can both decide it's time to reconnect (this
+  // function's own close-handler backoff, and start()'s separate periodic isPaired() check) —
+  // without this, both could fire close enough together to end up with two live sockets both
+  // assigned to the shared `ws` variable, corrupting whichever one loses the race (surfaced as
+  // "WebSocket is not open: readyState 0 (CONNECTING)" crashes when a stale handler's closure
+  // sends on a socket it no longer actually owns).
+  if (ws) return;
+  // A retry can already be scheduled (exponential backoff) from before this Hub reset to
+  // unpaired — e.g. several reconnect attempts queued up while genuinely offline, and by the
+  // time one of them fires we've since found out (via an earlier attempt) that our credentials
+  // are dead. Nothing valid to send at that point; let it quietly no-op instead of connecting
+  // with a null bus_id just to get rejected again.
+  if (!isPaired()) return;
 
-  ws.on('open', () => {
+  const socket = new WebSocket(CLOUD_WS_URL);
+  ws = socket;
+
+  socket.on('open', () => {
     reconnectDelay = RECONNECT_BASE_MS;
-    ws.send(JSON.stringify({ type: 'hello', bus_id: getBusId(), api_key: getApiKey() }));
+    socket.send(JSON.stringify({ type: 'hello', bus_id: getBusId(), api_key: getApiKey() }));
     console.log(`[syncAgent] connected to cloud at ${CLOUD_WS_URL}`);
   });
 
-  ws.on('message', (raw) => {
+  socket.on('message', (raw) => {
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -70,17 +97,66 @@ function connect() {
       applySyncState(msg.payload).catch((err) => console.warn('[syncAgent] failed to apply sync_state:', err.message));
     } else if (msg.type === 'report_ack') {
       markSynced();
+    } else if (msg.type === 'unpaired') {
+      handleUnpaired();
     } else if (msg.type === 'error') {
+      // The only error the cloud ever sends here is invalid_bus_or_key — this bus's credentials
+      // are no longer valid, whether because it was unpaired/deleted while this Hub happened to
+      // be offline (never got the explicit 'unpaired' push above), or the cloud's own database
+      // was reset out from under it. Same recovery either way: reset to unpaired so it shows a
+      // fresh pairing ID, rather than looping forever retrying with dead credentials while still
+      // looking paired locally.
       console.warn('[syncAgent] cloud rejected connection:', msg.message);
+      handleUnpaired();
     }
   });
 
-  ws.on('close', () => {
+  socket.on('close', () => {
+    if (ws !== socket) return; // a newer socket has already superseded this stale one — nothing to do
     ws = null;
+    // Nothing valid to reconnect with once unpaired — or about to be, the moment the trip
+    // that's holding it off ends (see handleUnpaired) — so don't spam retries with credentials
+    // the cloud has already invalidated. pairingAgent will register a fresh identity and the
+    // periodic check in start() reconnects once that completes.
+    if (!isPaired() || pendingUnpair) return;
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
   });
-  ws.on('error', () => {}); // 'close' always follows; avoid double-logging the same failure
+  socket.on('error', () => {}); // 'close' always follows; avoid double-logging the same failure
+}
+
+// Admin-triggered from the cloud (Disconnect from Server / delete bus) — this Hub's identity is
+// being severed. Never disrupts a trip already in progress: if one's active, this just remembers
+// to reset once it ends (mirrors updateAgent.js's "apply only when idle" posture) rather than
+// pulling device_config out from under the transport layer mid-trip.
+function handleUnpaired() {
+  if (state.trip) {
+    console.log('[syncAgent] admin disconnected this bus — will reset to unpaired once the current trip ends');
+    pendingUnpair = true;
+    return;
+  }
+  performUnpair();
+}
+
+function performUnpair() {
+  if (!isPaired()) return; // already reset — avoids redundantly restarting pairingAgent if this fires more than once
+  console.log('[syncAgent] resetting to unpaired (admin disconnected this bus from the server)');
+  db.prepare('DELETE FROM device_config').run();
+  db.prepare('DELETE FROM paired_devices').run(); // every connected phone loses access too
+  db.prepare('DELETE FROM assigned_routes').run(); // no longer this (now different) bus's routes
+
+  if (ws) ws.close();
+
+  state.update({
+    bus: { bus_id: null, reg_number: 'Not paired', friendly_name: null, route_assigned: null, route_name: null },
+  });
+
+  // Lazy require — pairingAgent.js requires this module at its own top level (to call
+  // connectIfPaired() after a successful claim), so requiring it back at this module's top
+  // level would create a circular require that resolves to an incomplete export. Requiring it
+  // here, inside a function body, is safe because by the time this actually runs both modules
+  // have already fully finished loading via server.js's initial require chain.
+  require('./pairingAgent').start();
 }
 
 // --- Pull: cloud -> hub ---
@@ -187,7 +263,7 @@ const AUDIO_TYPES = new Set(['chime', 'filler', 'stop_name', 'stop_name_ad', 'sp
 
 async function ensureContentDownloaded(item) {
   const isAudio = AUDIO_TYPES.has(item.type);
-  const dir = path.join(__dirname, '..', '..', 'assets', isAudio ? 'audio' : 'media');
+  const dir = path.join(ASSETS_DIR, isAudio ? 'audio' : 'media');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   const filename = path.basename(item.file_path);

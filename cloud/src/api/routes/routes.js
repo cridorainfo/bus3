@@ -55,6 +55,28 @@ router.post('/', (req, res) => {
   res.status(201).json({ ...db.prepare('SELECT * FROM routes WHERE route_id = ?').get(routeId), stops: [] });
 });
 
+// Editing name/name_ml/tier after creation — pushes to every bus currently assigned this route
+// immediately (same live-propagation pattern as the stop endpoints below), so a rename or tier
+// change reaches an online Hub without waiting for its next periodic reconnect.
+router.put('/:routeId', (req, res) => {
+  const { routeId } = req.params;
+  const route = db.prepare('SELECT * FROM routes WHERE route_id = ?').get(routeId);
+  if (!route) return res.status(404).json({ error: 'route_not_found' });
+
+  const { name, name_ml, tier } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
+
+  db.prepare('UPDATE routes SET name = ?, name_ml = ?, tier = ? WHERE route_id = ?').run(
+    name.trim(),
+    (name_ml || '').trim() || null,
+    tier || route.tier,
+    routeId
+  );
+
+  pushToBusesOnRoute(routeId);
+  res.json({ ...db.prepare('SELECT * FROM routes WHERE route_id = ?').get(routeId), stops: getStops(routeId) });
+});
+
 router.delete('/:routeId', (req, res) => {
   const { routeId } = req.params;
   const assigned = db.prepare('SELECT COUNT(*) c FROM buses WHERE route_id = ?').get(routeId).c;

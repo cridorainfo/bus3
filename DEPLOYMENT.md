@@ -148,6 +148,37 @@ Connect Code) — this is what the driver/conductor enters once on their phone's
 (see Part 3 of the driver-facing side in `hub/README.md`); it stays valid until you regenerate
 it, unlike the one-time pairing ID above (which is single-use, per Hub install).
 
+### Disconnecting or removing a bus
+
+Two different buttons on each bus's card in Admin's **Buses** tab, both undoable in the sense
+that they never touch anything mid-trip — either action is safely deferred until any trip in
+progress ends, then applied:
+
+- **Disconnect from Server** — severs just this Hub's identity: its api_key is invalidated and
+  it's told to reset immediately if it's online right now (or the next time it reconnects, if it
+  wasn't). The bus *record* stays exactly as it was — friendly name, connect code, assigned
+  routes all intact — so a replacement Hub PC can be paired to the exact same bus with nothing
+  to reconfigure. Use this when swapping hardware, or to free up a bus's identity without losing
+  its setup.
+- **Remove** — does everything Disconnect does, *plus* permanently deletes the bus record, its
+  route assignments, and its trip/play-log history. Use this when a bus is being decommissioned
+  for good.
+
+**Expected result either way**: within a few seconds if the Hub was online, or the moment it next
+reconnects if it wasn't, its Display View drops back to showing a fresh pairing ID and any phone
+connected to its Control Panel is disconnected. If the Display View *doesn't* flip to a pairing
+screen within a minute or so of clicking one of these buttons, the Hub itself is probably not
+reaching the cloud at all right now (check its own network connection and `HUB_CLOUD_URL`/
+`HUB_CLOUD_HTTP` settings) — the Admin action already succeeded on the cloud side regardless;
+the Hub just hasn't had a chance to hear about it yet.
+
+**Rolling out future Hub software updates** to this bus without a repeat physical visit is
+optional and off by default — see `hub/README.md` "Auto-updates" for the one-time
+`scripts/setup-auto-update.js` opt-in and the three extra persistent environment variables
+(`HUB_INSTALL_ROOT`/`HUB_DB_PATH`/`HUB_ASSETS_DIR`) it asks you to add alongside the ones set
+above. Skip it for now if you're only running one or two buses — plain manual updates (copy the
+new `hub/` folder over, `npm install`, restart the service) are simpler until that stops scaling.
+
 ### 2.4 Flash the ESP32 and wire it up
 
 Flash `firmware/esp32_controller/esp32_controller.ino` (Arduino IDE or `arduino-cli`) onto the

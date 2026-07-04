@@ -4,23 +4,46 @@ const db = require('../../db/db');
 
 const router = express.Router();
 
-const PENDING_EXPIRY_MS = 48 * 60 * 60 * 1000; // unclaimed pairing IDs older than this are pruned
+const PENDING_EXPIRY_MS = 48 * 60 * 60 * 1000; // unclaimed pairing IDs older than this are hard-deleted
+// A Hub re-registers every ~4s while it's actually alive and polling (see hub/src/sync/
+// pairingAgent.js) — anything not refreshed within this window is either crashed, offline, or
+// showing a different ID now, so it's hidden from the "waiting to be paired" list even though
+// the row itself isn't deleted yet (an in-flight claim on a briefly-stale-but-real ID should
+// still succeed).
+const STALE_THRESHOLD_MS = 15 * 1000;
 
 function pruneExpiredPending() {
   const cutoff = new Date(Date.now() - PENDING_EXPIRY_MS).toISOString().replace('T', ' ').slice(0, 19);
   db.prepare('DELETE FROM pending_pairings WHERE claimed_bus_id IS NULL AND created_at < ?').run(cutoff);
 }
 
-// Called by an unpaired Hub on boot (and retried until it succeeds) — registers the pairing ID
-// it's showing on its own screen so an admin can look it up. Deliberately unauthenticated: the
-// ID itself carries no access, it's just a lookup key an admin has to actively claim.
+// Called by an unpaired Hub on boot, and then again every poll tick as a heartbeat (not just
+// once) — so this row's last_seen_at only stays fresh while the Hub is actually still there.
+// Deliberately unauthenticated: the ID itself carries no access, it's just a lookup key an admin
+// has to actively claim.
 router.post('/register', (req, res) => {
   const { device_pairing_id: id } = req.body || {};
   if (!id) return res.status(400).json({ error: 'device_pairing_id_required' });
 
   pruneExpiredPending();
-  db.prepare('INSERT OR IGNORE INTO pending_pairings (device_pairing_id) VALUES (?)').run(id);
+  db.prepare(`
+    INSERT INTO pending_pairings (device_pairing_id, last_seen_at) VALUES (?, datetime('now'))
+    ON CONFLICT(device_pairing_id) DO UPDATE SET last_seen_at = datetime('now')
+  `).run(id);
   res.json({ ok: true });
+});
+
+// Listed in Admin's "Pair a Bus" card so the admin can click a real, currently-broadcasting ID
+// instead of retyping it off the bus's screen — misreads/typos are the likeliest cause of an
+// unknown_pairing_id error on the claim below. Filtered to recently-heartbeated rows only, so a
+// dead Hub's old ID doesn't linger here looking exactly as live as a real one.
+router.get('/pending', (req, res) => {
+  pruneExpiredPending();
+  const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString().replace('T', ' ').slice(0, 19);
+  const rows = db
+    .prepare('SELECT device_pairing_id, created_at FROM pending_pairings WHERE claimed_bus_id IS NULL AND last_seen_at >= ? ORDER BY created_at DESC')
+    .all(cutoff);
+  res.json(rows);
 });
 
 // Polled by the Hub until an admin claims it.

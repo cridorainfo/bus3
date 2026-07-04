@@ -75,6 +75,22 @@ html, body {
 
 .pair-bus-card { border-color: var(--green-line); background: var(--green-light); }
 
+.pending-pairing-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -10px 0 24px; }
+.pending-pairing-chip {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: #fff;
+  color: var(--green-dark);
+  border: 1px solid var(--green-line);
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.pending-pairing-chip:hover { background: var(--green-light); }
+.pending-pairing-chip span { font-family: inherit; font-weight: 500; letter-spacing: normal; color: var(--muted); font-size: 11px; }
+
 .form-inline {
   display: flex;
   flex-wrap: wrap;
@@ -122,6 +138,18 @@ input:focus, select:focus { outline: 2px solid var(--green-line); border-color: 
 .bus-main { display: flex; align-items: center; gap: 12px; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #c7cfc9; flex-shrink: 0; }
 .status-dot.online { background: var(--green); box-shadow: 0 0 0 4px var(--green-light); }
+.status-dot.awaiting { background: #d99a1f; box-shadow: 0 0 0 4px #fbeecd; }
+
+.awaiting-pairing-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #fbeecd;
+  color: #8a5f0e;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
 .bus-reg { font-weight: 700; font-size: 16px; }
 .bus-meta { font-size: 13px; color: var(--muted); }
 .bus-trip { font-size: 13px; color: var(--green-dark); font-weight: 600; }
@@ -189,6 +217,8 @@ input:focus, select:focus { outline: 2px solid var(--green-line); border-color: 
 }
 .content-title { font-weight: 600; }
 .content-meta { font-size: 13px; color: var(--muted); }
+
+.badge-live { background: var(--green); color: #fff; }
 
 audio, video { max-height: 40px; }
 video.preview { max-height: 60px; border-radius: 8px; }

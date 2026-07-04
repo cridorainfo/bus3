@@ -6,7 +6,10 @@ const state = {
   routes: [],
   buses: [],
   content: [],
+  releases: [],
+  pendingPairings: [],
   expandedRouteId: null,
+  editingRouteId: null,
 };
 
 // --- Top-level tabs ---
@@ -75,6 +78,39 @@ async function loadBuses() {
   state.buses = await api('/api/buses');
   renderBuses();
   populatePairBusSelect();
+  loadPendingPairings();
+}
+
+// Hubs currently broadcasting a pairing ID, waiting to be claimed — listing these lets the admin
+// click a real, live ID instead of retyping it off the bus's screen (the likeliest cause of an
+// "unknown_pairing_id" error is a misread/typo, or an ID copied from a different environment).
+async function loadPendingPairings() {
+  state.pendingPairings = await api('/api/pair/pending');
+  renderPendingPairings();
+}
+
+function timeAgo(isoLikeString) {
+  const then = new Date(isoLikeString.replace(' ', 'T') + 'Z').getTime();
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.round(mins / 60)}h ago`;
+}
+
+function renderPendingPairings() {
+  const wrap = document.getElementById('pending-pairing-list');
+  if (state.pendingPairings.length === 0) {
+    wrap.innerHTML = '<div class="hint">No bus is currently waiting to be paired.</div>';
+    return;
+  }
+  wrap.innerHTML = `<div class="hint">Waiting to be paired — click one to fill it in above:</div>`;
+  for (const p of state.pendingPairings) {
+    const chip = el(`<button type="button" class="pending-pairing-chip">${escapeHtml(p.device_pairing_id)} <span>· ${timeAgo(p.created_at)}</span></button>`);
+    chip.addEventListener('click', () => {
+      document.getElementById('pair-device-id').value = p.device_pairing_id;
+    });
+    wrap.appendChild(chip);
+  }
 }
 
 function renderBuses() {
@@ -94,18 +130,27 @@ function renderBuses() {
       ? `<span class="cred-value">${escapeHtml(bus.connect_code)}</span>`
       : `<span class="cred-sub">not set</span>`;
 
+    const awaitingPairing = !bus.paired_at;
+    const statusDotClass = bus.online ? 'online' : (awaitingPairing ? 'awaiting' : '');
+    const statusText = bus.online
+      ? 'online now'
+      : awaitingPairing
+        ? '<span class="awaiting-pairing-badge">Awaiting pairing</span>'
+        : (bus.last_seen_at ? 'last seen ' + bus.last_seen_at : 'never connected');
+
     const card = el(`
       <div class="card bus-card" data-bus-id="${bus.bus_id}">
         <div class="bus-main">
-          <span class="status-dot ${bus.online ? 'online' : ''}" title="${bus.online ? 'Online' : 'Offline'}"></span>
+          <span class="status-dot ${statusDotClass}" title="${bus.online ? 'Online' : awaitingPairing ? 'Awaiting pairing' : 'Offline'}"></span>
           <div>
             <div class="bus-reg">${escapeHtml(bus.friendly_name || bus.reg_number)}</div>
             ${bus.friendly_name ? `<div class="bus-reg-sub">${escapeHtml(bus.reg_number)}</div>` : ''}
-            <div class="bus-meta">${bus.tier} · ${bus.online ? 'online now' : (bus.last_seen_at ? 'last seen ' + bus.last_seen_at : 'never connected')}${bus.route_name ? ' · running ' + escapeHtml(bus.route_name) : ''}</div>
+            <div class="bus-meta">${bus.tier} · ${statusText}${bus.route_name ? ' · running ' + escapeHtml(bus.route_name) : ''}</div>
             ${tripInfo}
           </div>
         </div>
         <div class="bus-actions">
+          ${awaitingPairing ? '' : '<button class="btn btn-ghost btn-small unpair-bus-btn">Disconnect from Server</button>'}
           <button class="btn btn-danger btn-small remove-bus-btn">Remove</button>
         </div>
       </div>
@@ -158,8 +203,17 @@ function renderBuses() {
       }
     }
 
+    const unpairBtn = card.querySelector('.unpair-bus-btn');
+    if (unpairBtn) {
+      unpairBtn.addEventListener('click', async () => {
+        if (!confirm(`Disconnect ${bus.friendly_name || bus.reg_number} from the server? Its Hub will show a new pairing ID (once any trip in progress ends), and every phone currently connected to it will be disconnected. Its routes, name, and connect code all stay — pair it again whenever you're ready.`)) return;
+        await api(`/api/buses/${bus.bus_id}/unpair`, { method: 'POST' });
+        loadBuses();
+      });
+    }
+
     card.querySelector('.remove-bus-btn').addEventListener('click', async () => {
-      if (!confirm(`Remove bus ${bus.friendly_name || bus.reg_number}?`)) return;
+      if (!confirm(`Remove bus ${bus.friendly_name || bus.reg_number}? This deletes it entirely (routes assignments, connect code, history) — its Hub will be disconnected immediately and show a new pairing ID, and every phone connected to it will be disconnected too.`)) return;
       await api(`/api/buses/${bus.bus_id}`, { method: 'DELETE' });
       loadBuses();
     });
@@ -237,14 +291,40 @@ function renderRoutes() {
     return;
   }
   for (const route of state.routes) {
+    const isEditing = state.editingRouteId === route.route_id;
+
+    const headInfo = isEditing
+      ? `
+        <form class="edit-route-form">
+          <div class="field"><label>Name (English)</label><input type="text" class="edit-route-name" value="${escapeHtml(route.name)}" required /></div>
+          <div class="field"><label>Name (Malayalam)</label><input type="text" class="edit-route-name-ml" value="${escapeHtml(route.name_ml || '')}" /></div>
+          <div class="field">
+            <label>Tier</label>
+            <select class="edit-route-tier">
+              <option value="rural" ${route.tier === 'rural' ? 'selected' : ''}>Rural</option>
+              <option value="urban_standard" ${route.tier === 'urban_standard' ? 'selected' : ''}>Urban standard</option>
+              <option value="urban_women_premium" ${route.tier === 'urban_women_premium' ? 'selected' : ''}>Urban women-premium</option>
+            </select>
+          </div>
+          <div class="bus-actions">
+            <button type="submit" class="btn btn-primary btn-small">Save</button>
+            <button type="button" class="btn btn-ghost btn-small cancel-edit-route">Cancel</button>
+          </div>
+        </form>
+      `
+      : `
+        <div>
+          <div class="route-title">${escapeHtml(bothNames(route))}</div>
+          <div class="route-meta">${route.tier} · ${route.stop_count} stops · ${route.bus_count} bus(es) assigned</div>
+        </div>
+      `;
+
     const card = el(`
       <div class="card" data-route-id="${route.route_id}">
         <div class="route-card-head">
-          <div>
-            <div class="route-title">${escapeHtml(bothNames(route))}</div>
-            <div class="route-meta">${route.tier} · ${route.stop_count} stops · ${route.bus_count} bus(es) assigned</div>
-          </div>
+          ${headInfo}
           <div class="bus-actions">
+            ${isEditing ? '' : '<button class="btn btn-ghost btn-small edit-route">Edit</button>'}
             <button class="btn btn-ghost btn-small toggle-stops">${state.expandedRouteId === route.route_id ? 'Hide stops' : 'Manage stops'}</button>
             <button class="btn btn-danger btn-small delete-route">Delete</button>
           </div>
@@ -252,6 +332,36 @@ function renderRoutes() {
         <div class="stop-editor-mount"></div>
       </div>
     `);
+
+    if (isEditing) {
+      const form = card.querySelector('.edit-route-form');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api(`/api/routes/${route.route_id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name: form.querySelector('.edit-route-name').value,
+              name_ml: form.querySelector('.edit-route-name-ml').value,
+              tier: form.querySelector('.edit-route-tier').value,
+            }),
+          });
+          state.editingRouteId = null;
+          loadRoutes();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+      card.querySelector('.cancel-edit-route').addEventListener('click', () => {
+        state.editingRouteId = null;
+        renderRoutes();
+      });
+    } else {
+      card.querySelector('.edit-route').addEventListener('click', () => {
+        state.editingRouteId = route.route_id;
+        renderRoutes();
+      });
+    }
 
     card.querySelector('.toggle-stops').addEventListener('click', () => {
       state.expandedRouteId = state.expandedRouteId === route.route_id ? null : route.route_id;
@@ -505,9 +615,36 @@ document.getElementById('form-add-announcement').addEventListener('submit', asyn
 
 // --- Stop Names: searchable directory of every global stop ---
 
+let stopDirectoryResults = []; // last text-search result set, before the audio/ads/Malayalam filters below
+
 async function loadStopDirectory(query) {
-  const results = await api(`/api/stops/search?q=${encodeURIComponent(query || '')}`);
-  renderStopDirectory(results);
+  stopDirectoryResults = await api(`/api/stops/search?q=${encodeURIComponent(query || '')}`);
+  renderFilteredStopDirectory();
+}
+
+// Filtering happens client-side against the already-fetched search results — the fields these
+// checks need (has_audio_clip, ads_enabled, name_ml) are already in every row, so there's no
+// reason to round-trip to the server just because a filter dropdown changed.
+function renderFilteredStopDirectory() {
+  const audioFilter = document.getElementById('stopnames-filter-audio').value;
+  const adsFilter = document.getElementById('stopnames-filter-ads').value;
+  const mlFilter = document.getElementById('stopnames-filter-ml').value;
+
+  const filtered = stopDirectoryResults.filter((stop) => {
+    if (audioFilter === 'missing' && stop.has_audio_clip) return false;
+    if (audioFilter === 'has' && !stop.has_audio_clip) return false;
+    if (adsFilter === 'on' && !stop.ads_enabled) return false;
+    if (adsFilter === 'off' && stop.ads_enabled) return false;
+    if (mlFilter === 'missing' && stop.name_ml && stop.name_ml.trim()) return false;
+    if (mlFilter === 'has' && !(stop.name_ml && stop.name_ml.trim())) return false;
+    return true;
+  });
+
+  renderStopDirectory(filtered);
+}
+
+for (const id of ['stopnames-filter-audio', 'stopnames-filter-ads', 'stopnames-filter-ml']) {
+  document.getElementById(id).addEventListener('change', renderFilteredStopDirectory);
 }
 
 function renderStopDirectory(stops) {
@@ -661,12 +798,81 @@ document.getElementById('form-add-fullscreen').addEventListener('submit', async 
   }
 });
 
+// ===================== UPDATES (Hub software releases) =====================
+
+async function loadReleases() {
+  state.releases = await api('/api/hub-releases');
+  renderReleases();
+}
+
+function renderReleases() {
+  const list = document.getElementById('release-list');
+  list.innerHTML = '';
+  if (state.releases.length === 0) {
+    list.appendChild(el(`<div class="empty-state">No releases uploaded yet.</div>`));
+    return;
+  }
+  for (const release of state.releases) {
+    const card = el(`
+      <div class="card content-card" data-version="${escapeHtml(release.version)}">
+        <div class="content-main">
+          <span class="badge ${release.published ? 'badge-live' : ''}">${release.published ? 'Published' : 'Staged'}</span>
+          <div>
+            <div class="content-title">v${escapeHtml(release.version)}</div>
+            <div class="content-meta">${escapeHtml(release.notes || 'No notes')} · uploaded ${escapeHtml(release.created_at)}</div>
+            <div class="content-meta">sha256 ${escapeHtml(release.checksum_sha256.slice(0, 16))}…</div>
+          </div>
+        </div>
+        <div class="bus-actions">
+          <button class="btn btn-ghost btn-small toggle-publish-btn">${release.published ? 'Unpublish' : 'Publish'}</button>
+          <button class="btn btn-danger btn-small delete-release-btn">Delete</button>
+        </div>
+      </div>
+    `);
+
+    card.querySelector('.toggle-publish-btn').addEventListener('click', async () => {
+      const action = release.published ? 'unpublish' : 'publish';
+      await api(`/api/hub-releases/${release.version}/${action}`, { method: 'POST' });
+      loadReleases();
+    });
+    card.querySelector('.delete-release-btn').addEventListener('click', async () => {
+      if (!confirm(`Delete release v${release.version}? Buses already running it are unaffected.`)) return;
+      await api(`/api/hub-releases/${release.version}`, { method: 'DELETE' });
+      loadReleases();
+    });
+
+    list.appendChild(card);
+  }
+}
+
+document.getElementById('form-add-release').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('release-upload-hint');
+  hint.textContent = 'Uploading…';
+  hint.className = 'hint';
+  const fd = new FormData();
+  fd.append('version', document.getElementById('release-version').value.trim());
+  fd.append('notes', document.getElementById('release-notes').value);
+  fd.append('file', document.getElementById('release-file').files[0]);
+  try {
+    await api('/api/hub-releases', { method: 'POST', body: fd });
+    document.getElementById('form-add-release').reset();
+    hint.textContent = 'Uploaded as a staged release — click Publish when you want buses to pick it up.';
+    hint.className = 'hint success';
+    loadReleases();
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
+
 // ===================== Boot =====================
 
 async function refreshAll() {
   await loadRoutes();
   await loadBuses();
   await loadContent();
+  await loadReleases();
   loadStopDirectory(''); // browse-all by default — a stop created via Routes shows up immediately
 }
 

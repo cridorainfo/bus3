@@ -30,12 +30,14 @@ router.get('/search', (req, res) => {
     WHERE rs.stop_id = ?
   `);
   const hasAdClip = db.prepare("SELECT 1 FROM content_items WHERE stop_id = ? AND type = 'stop_name_ad' LIMIT 1");
+  const hasAudioClip = db.prepare("SELECT 1 FROM content_items WHERE stop_id = ? AND type = 'stop_name' LIMIT 1");
 
   res.json(
     rows.map((s) => ({
       ...s,
       used_by_routes: routesForStop.all(s.stop_id),
       has_ad_clip: !!hasAdClip.get(s.stop_id),
+      has_audio_clip: !!hasAudioClip.get(s.stop_id),
     }))
   );
 });

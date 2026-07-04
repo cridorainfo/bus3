@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../../db/db');
 const { uniqueId } = require('../idgen');
-const { pushSyncStateToBus } = require('../../sync/hubSyncServer');
+const { pushSyncStateToBus, disconnectBus } = require('../../sync/hubSyncServer');
 
 const router = express.Router();
 
@@ -74,9 +74,35 @@ router.delete('/:busId/routes/:routeId', (req, res) => {
   res.json({ ok: true, pushed_live: pushed });
 });
 
+// Severs this Hub's identity without deleting the bus record — its route assignments, friendly
+// name, and connect code all stay put (useful when swapping the physical PC/hardware for the
+// same bus). Rotates api_key so the old Hub's credentials stop working immediately, and pushes a
+// live disconnect if it's online right now so it shows a fresh pairing ID without waiting for a
+// reconnect attempt to happen to fail on its own.
+router.post('/:busId/unpair', (req, res) => {
+  const bus = db.prepare('SELECT * FROM buses WHERE bus_id = ?').get(req.params.busId);
+  if (!bus) return res.status(404).json({ error: 'bus_not_found' });
+
+  const apiKey = crypto.randomBytes(16).toString('hex');
+  db.prepare('UPDATE buses SET api_key = ?, paired_at = NULL WHERE bus_id = ?').run(apiKey, bus.bus_id);
+  disconnectBus(bus.bus_id);
+
+  res.json({ ok: true });
+});
+
 router.delete('/:busId', (req, res) => {
   const { busId } = req.params;
+  // Kick any live connection first — otherwise its next periodic report would try to insert a
+  // trip/play_log row referencing a bus_id that's about to not exist, violating the foreign key
+  // below anyway.
+  disconnectBus(busId);
+  // trips/play_logs/pending_pairings.claimed_bus_id all reference buses(bus_id) with no ON
+  // DELETE clause — deleting the bus without clearing these first fails with a FOREIGN KEY
+  // constraint error the moment it has ever run a trip or been paired (i.e. almost always).
   db.prepare('DELETE FROM bus_routes WHERE bus_id = ?').run(busId);
+  db.prepare('DELETE FROM trips WHERE bus_id = ?').run(busId);
+  db.prepare('DELETE FROM play_logs WHERE bus_id = ?').run(busId);
+  db.prepare('UPDATE pending_pairings SET claimed_bus_id = NULL, claimed_api_key = NULL WHERE claimed_bus_id = ?').run(busId);
   db.prepare('DELETE FROM buses WHERE bus_id = ?').run(busId);
   res.json({ ok: true });
 });

@@ -13,6 +13,7 @@
       <button class="tab active" data-tab="buses">Buses</button>
       <button class="tab" data-tab="routes">Routes</button>
       <button class="tab" data-tab="content">Content</button>
+      <button class="tab" data-tab="updates">Updates</button>
     </nav>
   </header>
 
@@ -37,6 +38,7 @@
         <button type="submit" class="btn btn-primary">Pair</button>
       </form>
       <div id="pair-hint" class="hint"></div>
+      <div id="pending-pairing-list" class="pending-pairing-list"></div>
 
       <form id="form-add-bus" class="card form-inline">
         <div class="field">
@@ -131,10 +133,34 @@
       <!-- --- Stop Names: searchable directory of every global stop --- -->
       <section id="subtab-stopnames" class="subtab-panel">
         <p class="subtitle">Every stop, from every route, in one place — a stop added while building a route shows up here automatically. Upload the plain name clip, optionally an ad-combined clip, and toggle which one plays.</p>
-        <div class="card">
-          <div class="field" style="min-width:100%">
+        <div class="card form-inline">
+          <div class="field" style="min-width:220px">
             <label>Search stops</label>
             <input type="text" id="stopnames-search" placeholder="Type to filter, or leave blank to see all…" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label>Audio</label>
+            <select id="stopnames-filter-audio">
+              <option value="">Any</option>
+              <option value="missing">Missing stop-name audio</option>
+              <option value="has">Has stop-name audio</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Ads</label>
+            <select id="stopnames-filter-ads">
+              <option value="">Any</option>
+              <option value="on">Ads on</option>
+              <option value="off">Ads off</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Malayalam name</label>
+            <select id="stopnames-filter-ml">
+              <option value="">Any</option>
+              <option value="missing">Missing</option>
+              <option value="has">Has Malayalam name</option>
+            </select>
           </div>
         </div>
         <div id="stopnames-list" class="stack"></div>
@@ -195,6 +221,30 @@
         <div id="fullscreen-list" class="stack"></div>
       </section>
 
+    </section>
+
+    <!-- ===================== UPDATES ===================== -->
+    <section id="tab-updates" class="tab-panel">
+      <div class="panel-head">
+        <h1>Hub Software Updates</h1>
+        <p class="subtitle">Upload a new Hub release, then Publish it when you're ready to roll out. Buses check for the latest published release on their own, download it in the background, and switch over the next time they're idle (no active trip) — never mid-route. See <code>hub/README.md</code> for how to cut a release with <code>scripts/build-release.js</code>.</p>
+      </div>
+
+      <form id="form-add-release" class="card form-inline" enctype="multipart/form-data">
+        <div class="field">
+          <label>Version</label>
+          <input type="text" id="release-version" placeholder="1.1.0" required />
+        </div>
+        <div class="field" style="flex:1">
+          <label>Notes (optional)</label>
+          <input type="text" id="release-notes" placeholder="What changed in this release" />
+        </div>
+        <div class="field"><label>Release bundle (.zip)</label><input type="file" id="release-file" accept=".zip" required /></div>
+        <button type="submit" class="btn btn-primary">Upload</button>
+      </form>
+      <div id="release-upload-hint" class="hint"></div>
+
+      <div id="release-list" class="stack"></div>
     </section>
 
   </main>

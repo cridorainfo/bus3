@@ -48,12 +48,13 @@ async function registerWithCloud(id) {
 }
 
 async function pollOnce(id) {
+  // Re-registering every tick (not just once) doubles as a heartbeat — the cloud's Admin only
+  // lists an ID as "waiting to be paired" while it's been refreshed recently (see cloud's
+  // pairing.js STALE_THRESHOLD_MS), so a Hub that's actually still alive needs to keep telling
+  // it so. Also re-registers automatically if the cloud's DB was reset and forgot this ID.
+  await registerWithCloud(id);
   try {
     const res = await fetch(`${CLOUD_HTTP_BASE}/api/pair/status/${id}`);
-    if (res.status === 404) {
-      await registerWithCloud(id); // cloud doesn't know this ID (e.g. its DB was reset) — re-register
-      return;
-    }
     if (!res.ok) return;
     const data = await res.json();
     if (data.claimed) adoptIdentity(data.bus_id, data.api_key);
@@ -86,15 +87,13 @@ function start() {
   state.update({ pairingId: id });
   console.log(`[pairingAgent] not paired — showing pairing ID ${id} on the Display View`);
 
-  let registered = false;
-  registerWithCloud(id).then((ok) => { registered = ok; });
+  pollOnce(id); // register + check immediately, don't wait a full tick
 
   const timer = setInterval(async () => {
     if (isPaired()) {
       clearInterval(timer);
       return;
     }
-    if (!registered) registered = await registerWithCloud(id);
     await pollOnce(id);
   }, POLL_INTERVAL_MS);
 }

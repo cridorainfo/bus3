@@ -33,6 +33,7 @@ ensureColumn('buses', 'friendly_name', 'friendly_name TEXT');
 ensureColumn('buses', 'paired_at', 'paired_at TEXT');
 ensureColumn('buses', 'connect_code', 'connect_code TEXT');
 ensureColumn('buses', 'devices_disconnect_at', 'devices_disconnect_at TEXT');
+ensureColumn('pending_pairings', 'last_seen_at', 'last_seen_at TEXT');
 
 // One-time backfill: stops used to belong to exactly one route — carry forward any pre-existing
 // route_id/sequence_no into route_stops (idempotent, INSERT OR IGNORE).

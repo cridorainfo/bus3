@@ -1,3 +1,5 @@
+const bootGuard = require('./bootGuard'); // must be first: a crash in any require below still counts as a failed boot
+
 const path = require('path');
 const express = require('express');
 const http = require('http');
@@ -14,7 +16,9 @@ const Watchdog = require('./transport/watchdog');
 const stateBus = require('./realtime/stateBus');
 const syncAgent = require('./sync/syncAgent');
 const pairingAgent = require('./sync/pairingAgent');
+const updateAgent = require('./sync/updateAgent');
 const { isPaired } = require('./config/deviceConfig');
+const { ASSETS_DIR } = require('./config/paths');
 
 const authRoutes = require('./api/routes/auth');
 const tripRoutes = require('./api/routes/trip');
@@ -31,8 +35,8 @@ app.use(express.json());
 // Static frontends — plain HTML/CSS/JS per spec's "deliberately light" recommendation.
 app.use('/display', express.static(path.join(__dirname, '..', 'public', 'display')));
 app.use('/panel', express.static(path.join(__dirname, '..', 'public', 'panel')));
-app.use('/audio', express.static(path.join(__dirname, '..', 'assets', 'audio')));
-app.use('/media', express.static(path.join(__dirname, '..', 'assets', 'media')));
+app.use('/audio', express.static(path.join(ASSETS_DIR, 'audio')));
+app.use('/media', express.static(path.join(ASSETS_DIR, 'media')));
 
 if (TRANSPORT_MODE === 'mock') {
   app.use('/sim', express.static(path.join(__dirname, '..', 'public', 'sim')));
@@ -89,9 +93,11 @@ stateBus.attach(server);
 
 server.listen(PORT, () => {
   console.log(`[hub] AdKerala Local Hub listening on http://localhost:${PORT} (transport=${TRANSPORT_MODE})`);
+  bootGuard.markHealthy(); // confirms this version isn't crash-looping — no-op unless auto-updates are set up
 });
 
 // Offline-first, unchanged: if the cloud is unreachable, this just retries in the background —
 // every trip/playback/display function above already works with zero network connectivity.
 syncAgent.start();
 pairingAgent.start(); // no-op if already paired; otherwise generates/shows a pairing ID and polls for a claim
+updateAgent.start(path.join(__dirname, '..')); // no-op unless auto-updates are set up (HUB_INSTALL_ROOT)

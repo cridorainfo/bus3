@@ -77,6 +77,19 @@ function pushSyncStateToBuses(busIds) {
   for (const id of busIds) pushSyncStateToBus(id);
 }
 
+// Admin-triggered "Disconnect from Server" / delete-bus — tells a currently-connected Hub to
+// reset to unpaired *right now* (it shows a fresh pairing ID the moment it's safe to, i.e. once
+// any trip in progress ends — see hub/src/sync/syncAgent.js's handleUnpaired) instead of it
+// hanging onto invalidated credentials until its next reconnect attempt happens to fail.
+function disconnectBus(busId) {
+  const socket = liveSockets.get(busId);
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'unpaired' }));
+    socket.close();
+  }
+  liveSockets.delete(busId);
+}
+
 // Every bus with this route in its assignment set (bus_routes) — or every bus at all, when the
 // content in question is truly global (route_id NULL).
 function busIdsAffectedByRoute(routeId) {
@@ -195,4 +208,4 @@ function attach(server) {
   return wss;
 }
 
-module.exports = { attach, pushSyncStateToBus, pushSyncStateToBuses, busIdsAffectedByRoute, busIdsAffectedByStop };
+module.exports = { attach, pushSyncStateToBus, pushSyncStateToBuses, busIdsAffectedByRoute, busIdsAffectedByStop, disconnectBus };

@@ -14,6 +14,7 @@ const routesRoutes = require('./api/routes/routes');
 const contentRoutes = require('./api/routes/content');
 const stopsRoutes = require('./api/routes/stops');
 const pairingRoutes = require('./api/routes/pairing');
+const hubReleasesRoutes = require('./api/routes/hubReleases');
 
 // Railway (and most PaaS hosts) inject PORT and expect the app to bind to it — CLOUD_PORT
 // still wins for local dev if both happen to be set.
@@ -32,6 +33,7 @@ app.use('/api/routes', routesRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/stops', stopsRoutes);
 app.use('/api/pair', pairingRoutes);
+app.use('/api/hub-releases', hubReleasesRoutes);
 
 // Multer file-type/size rejections land here as generic Express errors — surface them as JSON
 // instead of an HTML stack trace, since this API is consumed by fetch() from the Admin SPA.

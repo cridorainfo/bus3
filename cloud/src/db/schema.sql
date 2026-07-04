@@ -86,6 +86,11 @@ CREATE TABLE IF NOT EXISTS buses (
 CREATE TABLE IF NOT EXISTS pending_pairings (
     device_pairing_id  TEXT PRIMARY KEY,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Refreshed on every /register call while the Hub keeps polling — lets the Admin list only
+    -- show IDs that are actually still live, instead of one a Hub broadcast once and then
+    -- disappeared (crashed, lost network, got a new ID after a restart) but that lingers in
+    -- this table for up to PENDING_EXPIRY_MS regardless.
+    last_seen_at        TEXT NOT NULL DEFAULT (datetime('now')),
     claimed_bus_id      TEXT REFERENCES buses(bus_id),
     claimed_api_key     TEXT,
     claimed_at          TEXT
@@ -130,6 +135,20 @@ CREATE TABLE IF NOT EXISTS play_logs (
     billable             INTEGER,
     received_at          TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(bus_id, hub_log_id)
+);
+
+-- Hub software releases (the Hub's *code*, not its data — routes/stops/content already sync
+-- live via hubSyncServer). A staged release isn't visible to Hubs until published; publishing
+-- lets an admin stage + review before rolling out, and unpublish/delete give a way to pull a bad
+-- release before it reaches any more buses (a Hub that already applied it rolls back on its own
+-- if it crash-loops — see hub/src/bootGuard.js).
+CREATE TABLE IF NOT EXISTS hub_releases (
+    version           TEXT PRIMARY KEY,
+    notes             TEXT,
+    file_path         TEXT NOT NULL, -- relative to RELEASES_DIR
+    checksum_sha256   TEXT NOT NULL,
+    published         INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_stops_route ON stops(route_id, sequence_no);
