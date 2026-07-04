@@ -7,6 +7,8 @@
 
 const pairingScreen = document.getElementById('pairing-screen');
 const pairingIdValue = document.getElementById('pairing-id-value');
+const connectScreen = document.getElementById('connect-screen');
+const connectBadge = document.getElementById('connect-badge');
 const normalView = document.getElementById('normal-view');
 const routeNameLabel = document.getElementById('route-name-label');
 const stopsTrack = document.getElementById('stops-track');
@@ -22,10 +24,22 @@ let lastNowPlayingKey = null;
 // Unpaired: this is the Hub's only screen, so its pairing ID (a smart-TV-style device code)
 // shows here, big and read-only — nothing is ever typed at this kiosk PC. An admin reads the
 // ID and claims it from the Admin dashboard against a bus record.
-function renderPairingState(pairingId) {
+//
+// Once paired, a second gate applies before showing ads/route content: no driver/conductor
+// phone has connected yet, so the full screen instead shows a QR code straight to this bus's
+// Control Panel (avoids anyone needing to be told an IP address to type in). The moment at
+// least one phone connects, this switches to the normal view — but keeps a small QR badge in a
+// corner so a second crew member (e.g. the conductor, after the driver's already connected) can
+// still scan their own way in independently.
+function renderConnectionState(pairingId, connectedDeviceCount) {
   const unpaired = !!pairingId;
+  const noDevicesYet = !unpaired && !connectedDeviceCount;
+
   pairingScreen.style.display = unpaired ? 'flex' : 'none';
-  normalView.style.display = unpaired ? 'none' : 'block';
+  connectScreen.style.display = noDevicesYet ? 'flex' : 'none';
+  normalView.style.display = unpaired || noDevicesYet ? 'none' : 'block';
+  connectBadge.style.display = !unpaired && !noDevicesYet ? 'block' : 'none';
+
   if (unpaired) pairingIdValue.textContent = pairingId;
 }
 
@@ -137,10 +151,10 @@ function connect() {
   ws.onmessage = async (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type !== 'state') return;
-    const { bus, trip, nowPlaying, contentVersion, pairingId } = msg.payload;
+    const { bus, trip, nowPlaying, contentVersion, pairingId, connectedDeviceCount } = msg.payload;
 
-    renderPairingState(pairingId);
-    if (pairingId) return; // nothing else to render while showing the pairing screen
+    renderConnectionState(pairingId, connectedDeviceCount);
+    if (pairingId || !connectedDeviceCount) return; // nothing else to render while showing the pairing/connect screen
 
     renderRouteName(bus);
     await ensureStopsLoaded(trip, contentVersion);

@@ -94,6 +94,43 @@ keeps working exactly as in Phase 1, offline-first; both agents just retry with 
 Override the cloud location with `HUB_CLOUD_URL`/`HUB_CLOUD_HTTP` env vars (default
 `ws://localhost:4000/hub-sync`).
 
+## Connecting a driver/conductor's phone
+
+Once this Hub is paired (above), its Display View shows a QR code instead of the normal ad/
+route view until at least one phone has connected — no one needs to be told an IP address to
+type in. The flow:
+
+1. Driver or conductor joins the bus's own WiFi.
+2. Scans the QR code on the Display View with their phone's camera — it opens straight to this
+   bus's Control Panel (`http://<this-pc's-LAN-IP>:3000/panel/`; `src/api/routes/panelQr.js`
+   auto-detects the right address, overridable via `HUB_LAN_IP` if this PC has more than one
+   network adapter and picks the wrong one).
+3. Enters the connect code once (the "OTP from admin" — set/rotated from Admin's Buses tab). The
+   Panel is a PWA (`public/panel/manifest.json`) — "Add to Home Screen" saves a shortcut straight
+   to this URL, so this step is genuinely one-time per phone, not per session.
+4. The Display View switches to the normal view the moment the first phone connects, but keeps
+   a small QR badge in a corner — so a second crew member (e.g. the conductor, after the driver's
+   already connected) can still scan their own way in independently, and a "✓ Paired with
+   AdKerala" badge confirms at a glance this Hub is actually connected, not just a stray browser
+   window.
+
+Everything here — connecting, starting/ending trips, switching stops — talks directly to this
+Hub over the bus's own local WiFi and needs **zero internet connectivity**; this is the same
+offline-first design as the rest of the Hub; the phone only ever needs a network path to reach
+this PC, never the internet.
+
+**Two things worth knowing:**
+- **Windows Firewall** blocks a phone from reaching the Hub by default on a network categorized
+  as "Public" (common for a fresh WiFi setup) — see `../DEPLOYMENT.md` Part 3's Firewall note if
+  the PC can open the Panel but a phone on the same WiFi can't.
+- **The PWA's service worker requires a "secure context"** (HTTPS, or `localhost`) — most mobile
+  browsers do *not* treat a plain `http://192.168.x.x` LAN address as secure, so on some phones
+  the service worker (which only caches the app shell — never trip/API data, so this is purely a
+  faster-reload nicety) may silently fail to register. This is caught gracefully and doesn't
+  break anything — the Panel itself, "Add to Home Screen," and the connect-code flow all work
+  identically either way, just without the instant-shell-reload benefit on browsers that enforce
+  this strictly.
+
 ## Known Phase 1 simplifications (intentional, documented trade-offs)
 
 - **Audio plays in the browser, not natively in Node.** The kiosk Chrome instance already
@@ -110,6 +147,26 @@ Override the cloud location with `HUB_CLOUD_URL`/`HUB_CLOUD_HTTP` env vars (defa
   or an admin disconnects every device on the bus. No per-action PIN prompts. See
   `src/api/routes/auth.js` and `public/panel/app.js`.
 
+## Quick manual setup (no Windows service, just two scripts)
+
+If you're running the Hub by hand rather than installing it as a Windows service (below), use
+these two scripts instead of setting environment variables through Windows' GUI yourself:
+
+1. **`scripts/setup-first-time.bat`** — run this **once** per PC. Installs dependencies and
+   persists this PC's cloud connection settings (`HUB_CLOUD_URL`/`HUB_CLOUD_HTTP`/
+   `HUB_TRANSPORT`) as environment variables for this Windows account, defaulting to the
+   production cloud and `serial` transport (pass `-Transport mock` for bench-testing without an
+   ESP32 wired in yet). This is what actually fixes "the pairing ID never shows up on the
+   server" — that happens when a Hub never had these set and silently defaulted to a local test
+   address instead.
+2. **`scripts/run-hub.bat`** — run this **every time** afterward to start the Hub. No
+   configuration needed; it picks up whatever `setup-first-time.bat` persisted. Opens only the
+   passenger-facing Display View on this PC and prints the Control Panel URL for the driver/
+   conductor's own phone (never opened here — see "PC vs phone" note in the spec).
+
+(Environment variable changes only take effect in *new* windows — close and reopen your
+terminal, or just double-click `run-hub.bat` fresh from File Explorer, after running setup.)
+
 ## Deploying on the actual PC (once hardware is available)
 
 See `../DEPLOYMENT.md` for the full walkthrough (Windows prep, pairing, ESP32 flashing,
@@ -121,7 +178,9 @@ Windows service + kiosk, and an end-to-end test checklist). Short version:
 3. `node scripts/install-service.js` — registers + starts the Windows service (auto-restart
    on crash, no login required)
 4. Put a shortcut to `scripts/start-kiosk.bat` in the Startup folder (`shell:startup`) so the
-   Display View launches full-screen on every boot
+   Display View launches on every boot — in Edge/Chrome's **app mode** (`--app=`), not a normal
+   browser window: no tabs, address bar, or menu, filling the 1920x1080 screen exactly, and not
+   recognizable as "a browser" at all
 5. On first boot the Display View shows this Hub's pairing ID — read it off the kiosk screen and
    claim it from Admin's "Pair a Bus" card (see "Pairing this Hub to the cloud" above); no
    further action is needed at the PC itself

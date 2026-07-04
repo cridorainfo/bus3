@@ -1,4 +1,5 @@
 const EventEmitter = require('events');
+const db = require('../db/db');
 const { getDeviceConfig, getRouteName } = require('../config/deviceConfig');
 
 // Single in-memory live state, source of truth for what every connected phone/display sees
@@ -19,6 +20,7 @@ class HubState extends EventEmitter {
     this.nowPlaying = null; // composed segment sequence currently pushed to the display
     this.contentVersion = 0; // bumped by syncAgent whenever route/stop/content data changes
     this.pairingId = null; // set by pairingAgent while unpaired — Display View shows this on screen
+    this.connectedDeviceCount = db.prepare('SELECT COUNT(*) c FROM paired_devices').get().c;
   }
 
   snapshot() {
@@ -31,12 +33,20 @@ class HubState extends EventEmitter {
       nowPlaying: this.nowPlaying,
       contentVersion: this.contentVersion,
       pairingId: this.pairingId,
+      connectedDeviceCount: this.connectedDeviceCount,
     };
   }
 
   update(partial) {
     Object.assign(this, partial);
     this.emit('change', this.snapshot());
+  }
+
+  // Called anywhere paired_devices changes (auth.js's connect/disconnect, syncAgent's
+  // admin-disconnect-all reconciliation) so the Display View's QR-vs-normal-view decision stays
+  // live without polling.
+  refreshConnectedDeviceCount() {
+    this.update({ connectedDeviceCount: db.prepare('SELECT COUNT(*) c FROM paired_devices').get().c });
   }
 }
 

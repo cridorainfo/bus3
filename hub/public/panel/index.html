@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>AdKerala Control Panel</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <meta name="theme-color" content="#2e7d4f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body>
   <header id="identity-banner">
@@ -77,5 +83,13 @@
   </div>
 
   <script src="app.js"></script>
+  <script>
+    // Registers the app-shell-only cache (see sw.js) — safe to skip silently if unsupported
+    // (older browsers, or serving over plain http:// to something other than localhost, where
+    // service workers aren't permitted at all); the Panel works identically either way.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  </script>
 </body>
 </html>

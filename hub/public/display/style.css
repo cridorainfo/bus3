@@ -55,6 +55,71 @@ html, body {
 }
 #route-name-label:empty { display: none; }
 
+/* --- Connect screen: shown once this Hub is paired but no phone has connected yet --- */
+#connect-screen {
+  display: none;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.connect-box { text-align: center; max-width: 900px; }
+
+#connect-qr {
+  width: 420px;
+  height: 420px;
+  background: #fff;
+  padding: 24px;
+  border-radius: 16px;
+}
+
+.connect-label {
+  margin-top: 28px;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #f5f5f5;
+}
+
+.connect-hint {
+  margin-top: 16px;
+  font-size: 24px;
+  color: #9a9ab0;
+  line-height: 1.5;
+}
+
+/* --- Paired identity badge (top-right) — always visible once this Hub is paired, so it's
+   clear at a glance this isn't just a stray browser window. --- */
+#paired-badge {
+  position: absolute;
+  top: 20px;
+  right: 40px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #6ea875;
+  background: rgba(10, 10, 15, 0.6);
+  padding: 8px 20px;
+  border-radius: 10px;
+  z-index: 2;
+}
+
+/* --- Small persistent QR badge — lets a second crew member (e.g. conductor after the driver's
+   already connected) still scan their way in, without the full connect screen taking over.
+   Stacked under the paired badge (both top-right) so neither ever overlaps the bottom
+   progress strip's stop dots. --- */
+#connect-badge {
+  display: none;
+  position: absolute;
+  top: 78px;
+  right: 40px;
+  z-index: 2;
+  background: #fff;
+  padding: 8px;
+  border-radius: 10px;
+}
+#connect-badge img { width: 90px; height: 90px; display: block; }
+
 #normal-view { position: relative; width: 100%; height: 100%; }
 
 #ad-area {

@@ -144,6 +144,7 @@ function performUnpair() {
   db.prepare('DELETE FROM device_config').run();
   db.prepare('DELETE FROM paired_devices').run(); // every connected phone loses access too
   db.prepare('DELETE FROM assigned_routes').run(); // no longer this (now different) bus's routes
+  state.refreshConnectedDeviceCount();
 
   if (ws) ws.close();
 
@@ -236,6 +237,7 @@ async function applySyncState(payload) {
     if (bus.devices_disconnect_at && bus.devices_disconnect_at !== cfgBefore.devices_disconnect_last_applied) {
       db.prepare('DELETE FROM paired_devices').run();
       db.prepare('UPDATE device_config SET devices_disconnect_last_applied = ? WHERE bus_id = ?').run(bus.devices_disconnect_at, busId);
+      state.refreshConnectedDeviceCount();
       console.log('[syncAgent] admin disconnected all paired phones for this bus');
     }
   }

@@ -25,6 +25,7 @@ const tripRoutes = require('./api/routes/trip');
 const createStatusRouter = require('./api/routes/status');
 const createDebugRouter = require('./api/routes/debug');
 const pairingRoutes = require('./api/routes/pairing');
+const createPanelQrRouter = require('./api/routes/panelQr');
 
 const PORT = Number(process.env.HUB_PORT || 3000);
 const TRANSPORT_MODE = (process.env.HUB_TRANSPORT || 'mock').toLowerCase();
@@ -84,6 +85,7 @@ app.use('/api/pair', pairingRoutes);
 app.use('/api/auth', authRoutes.router);
 app.use('/api/trip', tripRoutes);
 app.use('/api/status', createStatusRouter(watchdog));
+app.use('/api/panel-qr.svg', createPanelQrRouter(PORT));
 if (TRANSPORT_MODE === 'mock') {
   app.use('/debug', createDebugRouter(transport));
 }

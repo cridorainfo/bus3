@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../../db/db');
+const state = require('../../engine/state');
 const { getDeviceConfig } = require('../../config/deviceConfig');
 
 const router = express.Router();
@@ -23,6 +24,7 @@ router.post('/connect', (req, res) => {
 
   const deviceToken = crypto.randomBytes(24).toString('hex');
   db.prepare('INSERT INTO paired_devices (device_token, paired_at, last_seen_at) VALUES (?, datetime(\'now\'), datetime(\'now\'))').run(deviceToken);
+  state.refreshConnectedDeviceCount(); // Display View switches off the QR-to-connect screen once someone's here
 
   res.json({ ok: true, device_token: deviceToken });
 });
@@ -31,6 +33,7 @@ router.post('/connect', (req, res) => {
 router.post('/disconnect', (req, res) => {
   const token = req.header('x-device-token') || (req.body && req.body.device_token);
   if (token) db.prepare('DELETE FROM paired_devices WHERE device_token = ?').run(token);
+  state.refreshConnectedDeviceCount();
   res.json({ ok: true });
 });
 

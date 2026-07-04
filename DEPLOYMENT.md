@@ -244,8 +244,18 @@ Work through these on the real bus, in this order, before considering it live:
 - [ ] **Service survives a reboot.** Power-cycle the PC; confirm the Hub service and kiosk
       Display View both come back with zero manual steps (spec's <60s boot-to-operational).
 - [ ] **Phone reaches the Control Panel.** Connect a phone to the bus's own WiFi
-      (`AdKerala-<reg-number>` SSID) and open `http://<pc-ip>:3000/panel/`. Confirm the identity
-      banner shows the right registration number and route.
+      (`AdKerala-<reg-number>` SSID) and open `http://<pc-ip>:3000/panel/` (or scan the QR code
+      shown on the Display View's connect screen). Confirm the identity banner shows the right
+      registration number and route.
+      **If the PC itself can open the Panel but a phone on the same WiFi can't**, this is almost
+      always Windows Firewall — a fresh WiFi network defaults to the restrictive "Public"
+      category, which blocks inbound connections from other devices unless a rule explicitly
+      allows the Hub's port. Fix once, per PC, from an elevated PowerShell:
+      ```
+      New-NetFirewallRule -DisplayName "AdKerala Hub" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Any
+      ```
+      (`localhost` access from the PC itself is never affected by the firewall either way, which
+      is why this can be easy to miss during setup — it only shows up once a phone actually tries.)
 - [ ] **ESP32 reconnect test (the most safety-critical item in the whole spec).** Start a trip,
       advance a couple of stops, then physically unplug the ESP32 and plug it into a
       **different** USB port. Confirm the Hub reconnects within a few seconds with trip
