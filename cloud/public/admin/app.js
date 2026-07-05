@@ -1089,6 +1089,7 @@ document.getElementById('form-add-fullscreen').addEventListener('submit', async 
 async function loadAdTiming() {
   const settings = await api('/api/settings');
   document.getElementById('ad-interval-sec').value = settings.ad_interval_sec;
+  document.getElementById('stop-name-toggle-sec').value = settings.stop_name_toggle_sec;
 }
 
 document.getElementById('form-ad-timing').addEventListener('submit', async (e) => {
@@ -1097,9 +1098,13 @@ document.getElementById('form-ad-timing').addEventListener('submit', async (e) =
   try {
     const saved = await api('/api/settings', {
       method: 'PUT',
-      body: JSON.stringify({ ad_interval_sec: Number(document.getElementById('ad-interval-sec').value) }),
+      body: JSON.stringify({
+        ad_interval_sec: Number(document.getElementById('ad-interval-sec').value),
+        stop_name_toggle_sec: Number(document.getElementById('stop-name-toggle-sec').value),
+      }),
     });
     document.getElementById('ad-interval-sec').value = saved.ad_interval_sec;
+    document.getElementById('stop-name-toggle-sec').value = saved.stop_name_toggle_sec;
     hint.textContent = 'Saved — pushed live to online buses.';
     hint.className = 'hint success';
     setTimeout(() => (hint.textContent = ''), 4000);

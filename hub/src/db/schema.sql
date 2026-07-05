@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS device_config (
 );
 
 -- Fleet-wide behavior settings synced down from the cloud (e.g. ad_interval_sec — how often
--- the passenger screen rotates ads). Local mirror only; the cloud's Admin is the editor.
+-- the passenger screen rotates ads; stop_name_toggle_sec — EN/ML stop-name alternation).
 CREATE TABLE IF NOT EXISTS settings (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL

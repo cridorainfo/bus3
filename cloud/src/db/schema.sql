@@ -150,7 +150,8 @@ CREATE TABLE IF NOT EXISTS play_logs (
     UNIQUE(bus_id, hub_log_id)
 );
 
--- Fleet-wide behavior settings (e.g. ad_interval_sec — how often the screen rotates ads),
+-- Fleet-wide behavior settings (e.g. ad_interval_sec — how often the screen rotates ads;
+-- stop_name_toggle_sec — how often stop names alternate EN/ML on the passenger display),
 -- editable from Admin's Content tab and shipped to every bus inside sync_state.
 CREATE TABLE IF NOT EXISTS settings (
     key    TEXT PRIMARY KEY,

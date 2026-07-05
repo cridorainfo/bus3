@@ -6,6 +6,8 @@ const db = require('./db/db');
 const EDITABLE = {
   // How often (seconds) the passenger screen rotates to a fresh ad between stops.
   ad_interval_sec: { min: 10, max: 3600, default: 60 },
+  // How often (seconds) the passenger screen alternates stop names between Malayalam and English.
+  stop_name_toggle_sec: { min: 2, max: 120, default: 4 },
 };
 
 function currentSettings() {

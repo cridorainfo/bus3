@@ -14,6 +14,8 @@
   --danger: #b3261e;
   --amber: #f2a51a;
   --shadow: 0 2px 6px rgba(20, 35, 27, 0.06), 0 12px 32px rgba(20, 35, 27, 0.07);
+  --font-en: 'Segoe UI', Arial, sans-serif;
+  --font-ml: 'Noto Sans Malayalam', var(--font-en);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,8 +26,11 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--ink);
-  font-family: 'Segoe UI', Arial, sans-serif;
+  font-family: var(--font-en);
 }
+
+.lang-ml { font-family: var(--font-ml); }
+.lang-en { font-family: var(--font-en); }
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slideFadeUp { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
@@ -241,12 +246,10 @@ html, body {
   line-height: 1.15;
 }
 #next-stop-name.animate { animation: slideFadeUp 0.6s ease; }
+#next-stop-name.lang-toggle { animation: fadeIn 0.35s ease; }
 
 #next-stop-name-en {
-  font-size: 44px;
-  font-weight: 600;
-  color: var(--muted);
-  margin-top: 8px;
+  display: none;
 }
 
 /* --- Full-route timeline: every stop, completed → current → upcoming --- */
@@ -378,6 +381,9 @@ html, body {
   font-weight: 800;
   color: var(--green-dark);
 }
+#mini-next-stop-name.lang-toggle { animation: fadeIn 0.35s ease; }
+
+.stop-label.lang-toggle { animation: fadeIn 0.35s ease; }
 
 /* --- Small persistent QR badge (second crew member can still scan in) --- */
 #connect-badge {

@@ -1,6 +1,7 @@
 const EventEmitter = require('events');
 const db = require('../db/db');
 const { getDeviceConfig, getRouteName } = require('../config/deviceConfig');
+const { currentFleetSettings } = require('../config/fleetSettings');
 
 // Single in-memory live state, source of truth for what every connected phone/display sees
 // right now (spec 4.2: "multiple phones, one live state"). Persisted facts (trips, play_logs,
@@ -38,6 +39,7 @@ class HubState extends EventEmitter {
       connectedDeviceCount: this.connectedDeviceCount,
       cloudOnline: this.cloudOnline,
       updating: this.updating,
+      settings: currentFleetSettings(),
     };
   }
 

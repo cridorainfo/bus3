@@ -23,7 +23,6 @@ const infoPanel = document.getElementById('info-panel');
 const idleBranding = document.getElementById('idle-branding');
 const nextStopBlock = document.getElementById('next-stop-block');
 const nextStopName = document.getElementById('next-stop-name');
-const nextStopNameEn = document.getElementById('next-stop-name-en');
 const timeline = document.getElementById('timeline');
 const adBanner = document.getElementById('ad-banner');
 const miniNextStop = document.getElementById('mini-next-stop');
@@ -36,6 +35,63 @@ let lastNowPlayingKey = null;
 let lastBannerAd = null; // banner ads persist in the bottom strip until replaced by a newer one
 let videoAdActive = false;
 let latestTrip = null;
+let stopNameToggleSec = 4;
+let showEnglishStopNames = false;
+let stopNameToggleTimer = null;
+let lastRenderedStopId = null;
+
+function stopNameForLang(stop, english) {
+  if (!stop) return '—';
+  if (english) return stop.name_en || stop.name_ml || '—';
+  return stop.name_ml || stop.name_en || '—';
+}
+
+function pulseLangToggle(el) {
+  if (!el) return;
+  el.classList.remove('lang-toggle');
+  void el.offsetWidth;
+  el.classList.add('lang-toggle');
+}
+
+function setStopNameLangClass(el, english) {
+  if (!el) return;
+  el.classList.toggle('lang-en', english);
+  el.classList.toggle('lang-ml', !english);
+}
+
+function applyStopNameLanguage() {
+  const stop = currentNextStop();
+  const text = stopNameForLang(stop, showEnglishStopNames);
+  nextStopName.textContent = text;
+  miniNextStopName.textContent = text;
+  setStopNameLangClass(nextStopName, showEnglishStopNames);
+  setStopNameLangClass(miniNextStopName, showEnglishStopNames);
+  pulseLangToggle(nextStopName);
+  pulseLangToggle(miniNextStopName);
+  timeline.querySelectorAll('.stop-label').forEach((label, idx) => {
+    const s = stopsCache.stops[idx];
+    if (!s) return;
+    label.textContent = stopNameForLang(s, showEnglishStopNames);
+    setStopNameLangClass(label, showEnglishStopNames);
+    pulseLangToggle(label);
+  });
+}
+
+function restartStopNameToggleTimer(sec) {
+  stopNameToggleSec = sec;
+  clearInterval(stopNameToggleTimer);
+  stopNameToggleTimer = setInterval(() => {
+    showEnglishStopNames = !showEnglishStopNames;
+    applyStopNameLanguage();
+  }, stopNameToggleSec * 1000);
+}
+
+function syncStopNameToggleSetting(settings) {
+  const sec = Number(settings?.stop_name_toggle_sec);
+  const nextSec = Number.isFinite(sec) && sec >= 2 ? sec : 4;
+  if (nextSec === stopNameToggleSec && stopNameToggleTimer) return;
+  restartStopNameToggleTimer(nextSec);
+}
 
 // --- Top-level screen switching ---
 function renderConnectionState(pairingId, connectedDeviceCount) {
@@ -78,15 +134,18 @@ function renderNextStop() {
   idleBranding.style.display = stop ? 'none' : 'block';
   nextStopBlock.style.display = stop ? 'block' : 'none';
   if (stop) {
-    // Re-trigger the slide/fade only when the stop actually changes — not on every state push.
-    if (nextStopName.textContent !== stop.name_ml) {
+    const stopChanged = lastRenderedStopId !== stop.stop_id;
+    if (stopChanged) {
+      showEnglishStopNames = false;
+      lastRenderedStopId = stop.stop_id;
+      // Re-trigger the slide/fade only when the stop actually changes — not on every state push.
       nextStopName.classList.remove('animate');
       void nextStopName.offsetWidth; // forces a reflow so removing+re-adding restarts the animation
       nextStopName.classList.add('animate');
     }
-    nextStopName.textContent = stop.name_ml;
-    nextStopNameEn.textContent = stop.name_en || '';
-    miniNextStopName.textContent = stop.name_ml;
+    applyStopNameLanguage();
+  } else {
+    lastRenderedStopId = null;
   }
 }
 
@@ -116,7 +175,7 @@ function renderTimeline() {
     if (idx === currentIdx) classes.push('current'); // pulsing dot + the bus riding above it
     el.className = classes.join(' ');
     const busMarker = idx === currentIdx ? `<div class="bus-marker">${BUS_SVG}</div>` : '';
-    el.innerHTML = `${busMarker}<div class="dot"></div><div class="stop-label">${stop.name_ml}</div>`;
+    el.innerHTML = `${busMarker}<div class="dot"></div><div class="stop-label ${showEnglishStopNames ? 'lang-en' : 'lang-ml'}">${stopNameForLang(stop, showEnglishStopNames)}</div>`;
     timeline.appendChild(el);
   });
 }
@@ -234,6 +293,7 @@ function connect() {
 
     latestTrip = payload.trip;
     renderTopBar(payload);
+    syncStopNameToggleSetting(payload.settings);
     await ensureStopsLoaded(payload.trip, payload.contentVersion);
     renderNextStop();
     renderTimeline();
@@ -244,3 +304,4 @@ function connect() {
 }
 
 connect();
+restartStopNameToggleTimer(stopNameToggleSec);
