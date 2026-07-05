@@ -74,34 +74,44 @@ if (cfg && cfg.route_assigned) {
 }
 
 // Older hub.db files enforced play_logs.content_id -> content_items, which blocks stale-content
-// cleanup during sync. Rebuild the table once without that FK (schema.sql is already loose).
-if (!db.prepare("SELECT 1 FROM settings WHERE key = 'play_logs_loose_content_id'").get()) {
-  const contentIdFk = db.prepare("PRAGMA foreign_key_list('play_logs')").all().some((f) => f.from === 'content_id');
-  if (contentIdFk) {
-    db.transaction(() => {
-      db.exec(`
-        CREATE TABLE play_logs_migrated (
-          log_id               INTEGER PRIMARY KEY AUTOINCREMENT,
-          trip_id              INTEGER REFERENCES trips(trip_id),
-          content_id           TEXT,
-          campaign_id          TEXT,
-          stop_id              TEXT REFERENCES stops(stop_id),
-          played_at            TEXT NOT NULL DEFAULT (datetime('now')),
-          duration_played_sec  REAL,
-          lat                  REAL,
-          long                 REAL,
-          billable             INTEGER NOT NULL DEFAULT 0,
-          synced               INTEGER NOT NULL DEFAULT 0
-        );
-        INSERT INTO play_logs_migrated SELECT * FROM play_logs;
-        DROP TABLE play_logs;
-        ALTER TABLE play_logs_migrated RENAME TO play_logs;
-        CREATE INDEX IF NOT EXISTS idx_play_logs_trip ON play_logs(trip_id);
-        CREATE INDEX IF NOT EXISTS idx_play_logs_synced ON play_logs(synced);
-      `);
-    })();
-  }
-  db.prepare("INSERT INTO settings (key, value) VALUES ('play_logs_loose_content_id', '1')").run();
+// cleanup during sync. Rebuild without that FK whenever it is still present — not only once,
+// because a partial migration or copied hub.db can leave the FK behind while the setting flag exists.
+function playLogsHasContentIdFk() {
+  return db.prepare("PRAGMA foreign_key_list('play_logs')").all().some(
+    (f) => f.from === 'content_id' && f.table === 'content_items'
+  );
 }
 
+function ensurePlayLogsWithoutContentFk() {
+  if (!playLogsHasContentIdFk()) return false;
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE play_logs_migrated (
+        log_id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        trip_id              INTEGER REFERENCES trips(trip_id),
+        content_id           TEXT,
+        campaign_id          TEXT,
+        stop_id              TEXT REFERENCES stops(stop_id),
+        played_at            TEXT NOT NULL DEFAULT (datetime('now')),
+        duration_played_sec  REAL,
+        lat                  REAL,
+        long                 REAL,
+        billable             INTEGER NOT NULL DEFAULT 0,
+        synced               INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO play_logs_migrated SELECT * FROM play_logs;
+      DROP TABLE play_logs;
+      ALTER TABLE play_logs_migrated RENAME TO play_logs;
+      CREATE INDEX IF NOT EXISTS idx_play_logs_trip ON play_logs(trip_id);
+      CREATE INDEX IF NOT EXISTS idx_play_logs_synced ON play_logs(synced);
+    `);
+  })();
+  db.prepare("INSERT INTO settings (key, value) VALUES ('play_logs_loose_content_id', '1') ON CONFLICT(key) DO NOTHING").run();
+  console.log('[db] rebuilt play_logs without content_id FK so sync can delete stale clips');
+  return true;
+}
+
+ensurePlayLogsWithoutContentFk();
+
 module.exports = db;
+module.exports.ensurePlayLogsWithoutContentFk = ensurePlayLogsWithoutContentFk;

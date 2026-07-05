@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const WebSocket = require('ws');
 const db = require('../db/db');
+const { ensurePlayLogsWithoutContentFk } = db;
 const state = require('../engine/state');
 const { getBusId, getApiKey, isPaired, getDeviceConfig, getRouteName, getRouteNameMl } = require('../config/deviceConfig');
 const { CLOUD_WS_URL, CLOUD_HTTP_BASE } = require('../config/cloudConfig');
@@ -313,6 +314,7 @@ async function applySyncState(payload) {
   const localContentRows = db.prepare('SELECT content_id, file_path, type, route_id, stop_id, target_bus_id, tier FROM content_items').all();
   const nullPlayLogContentRef = db.prepare('UPDATE play_logs SET content_id = NULL WHERE content_id = ?');
   const deleteContentItem = db.prepare('DELETE FROM content_items WHERE content_id = ?');
+  ensurePlayLogsWithoutContentFk();
 
   // Download first — never drop local clips until replacements are actually on disk, otherwise
   // a failed fetch leaves announcements/ads with nothing to play.
@@ -342,9 +344,7 @@ async function applySyncState(payload) {
         (inc) => !downloadOkById.get(inc.content_id) && sameContentScope(inc, row)
       );
       if (failedReplacement) continue;
-      nullPlayLogContentRef.run(row.content_id);
-      deleteContentItem.run(row.content_id);
-      unlinkContentFile(row.file_path);
+      removeContentItem(row.content_id, row.file_path, nullPlayLogContentRef, deleteContentItem);
     }
   })();
 
@@ -391,6 +391,32 @@ function unlinkContentFile(filePath) {
   fs.unlink(localPath, () => {});
 }
 
+function removeContentItem(contentId, filePath, nullPlayLogContentRef, deleteContentItem) {
+  const runDelete = () => {
+    db.transaction(() => {
+      nullPlayLogContentRef.run(contentId);
+      deleteContentItem.run(contentId);
+    })();
+    unlinkContentFile(filePath);
+  };
+  try {
+    runDelete();
+    return true;
+  } catch (err) {
+    if (String(err.message).includes('FOREIGN KEY') && ensurePlayLogsWithoutContentFk()) {
+      try {
+        runDelete();
+        return true;
+      } catch (retryErr) {
+        console.warn(`[syncAgent] could not delete stale content_item ${contentId}: ${retryErr.message}`);
+        return false;
+      }
+    }
+    console.warn(`[syncAgent] could not delete stale content_item ${contentId}: ${err.message}`);
+    return false;
+  }
+}
+
 function enforceSingleGlobalClipPerType(contentItems, downloadOkById, nullPlayLogContentRef, deleteContentItem) {
   for (const type of GLOBAL_ANNOUNCE_TYPES) {
     const incoming = (contentItems || []).filter(
@@ -404,9 +430,7 @@ function enforceSingleGlobalClipPerType(contentItems, downloadOkById, nullPlayLo
     `).all(type);
     for (const row of locals) {
       if (row.content_id === keepId) continue;
-      nullPlayLogContentRef.run(row.content_id);
-      deleteContentItem.run(row.content_id);
-      unlinkContentFile(row.file_path);
+      removeContentItem(row.content_id, row.file_path, nullPlayLogContentRef, deleteContentItem);
     }
   }
 }
@@ -437,9 +461,7 @@ function dedupeGlobalAnnouncementClips(nullPlayLogContentRef, deleteContentItem)
       ORDER BY CASE WHEN content_id LIKE '%-default' THEN 1 ELSE 0 END, content_id DESC
     `).all(type);
     for (let i = 1; i < rows.length; i += 1) {
-      nullPlayLogContentRef.run(rows[i].content_id);
-      deleteContentItem.run(rows[i].content_id);
-      unlinkContentFile(rows[i].file_path);
+      removeContentItem(rows[i].content_id, rows[i].file_path, nullPlayLogContentRef, deleteContentItem);
     }
   }
 }
