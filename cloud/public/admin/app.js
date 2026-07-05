@@ -12,6 +12,7 @@ const state = {
   editingRouteId: null,
   editingBusId: null,
   editingStopId: null,
+  editingRouteStopId: null,
   editingCampaignId: null,
   campaigns: [],
 };
@@ -496,20 +497,63 @@ async function renderStopEditor(mount, routeId) {
     const adsBadge = stop.has_ad_clip
       ? `<span class="also-used-badge ${stop.ads_enabled ? 'ads-on' : ''}">Ads: ${stop.ads_enabled ? 'on' : 'off'}</span>`
       : '';
+    const isEditingStop = state.editingRouteStopId === stop.stop_id;
+    const namesBlock = isEditingStop
+      ? `
+        <form class="edit-route-stop-form">
+          <div class="field"><label>Malayalam name</label><input type="text" class="edit-route-stop-ml" value="${escapeHtml(stop.name_ml || '')}" required /></div>
+          <div class="field"><label>English name</label><input type="text" class="edit-route-stop-en" value="${escapeHtml(stop.name_en || '')}" /></div>
+          <div class="bus-actions">
+            <button type="submit" class="btn btn-primary btn-small">Save</button>
+            <button type="button" class="btn btn-ghost btn-small cancel-edit-route-stop">Cancel</button>
+          </div>
+        </form>
+      `
+      : `<div class="stop-name-ml">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</div>`;
+
     const row = el(`
       <div class="stop-row" data-stop-id="${stop.stop_id}">
         <div class="stop-seq">${idx + 1}</div>
-        <div class="stop-names">
-          <div class="stop-name-ml">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</div>
-        </div>
+        <div class="stop-names">${namesBlock}</div>
         ${adsBadge}
         <div class="stop-row-actions">
+          ${isEditingStop ? '' : '<button class="icon-btn edit-route-stop" title="Edit name">✎</button>'}
           <button class="icon-btn move-up" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="icon-btn move-down" title="Move down" ${idx === stops.length - 1 ? 'disabled' : ''}>↓</button>
           <button class="icon-btn remove-stop" title="Unlink from this route">✕</button>
         </div>
       </div>
     `);
+
+    if (isEditingStop) {
+      const form = row.querySelector('.edit-route-stop-form');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api(`/api/stops/${stop.stop_id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name_ml: form.querySelector('.edit-route-stop-ml').value,
+              name_en: form.querySelector('.edit-route-stop-en').value,
+            }),
+          });
+          state.editingRouteStopId = null;
+          loadRoutes();
+          reloadStopDirectoryPreservingSearch();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+      row.querySelector('.cancel-edit-route-stop').addEventListener('click', () => {
+        state.editingRouteStopId = null;
+        renderStopEditor(mount, routeId);
+      });
+    } else {
+      row.querySelector('.edit-route-stop').addEventListener('click', () => {
+        state.editingRouteStopId = stop.stop_id;
+        renderStopEditor(mount, routeId);
+      });
+    }
 
     row.querySelector('.move-up').addEventListener('click', async () => {
       const order = stops.map((s) => s.stop_id);
