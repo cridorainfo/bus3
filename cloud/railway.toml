@@ -1,0 +1,6 @@
+# Used when Railway service Root Directory is set to cloud/ (Nixpacks path).
+[build]
+watchPatterns = ["**"]
+
+[deploy]
+restartPolicyType = "ON_FAILURE"

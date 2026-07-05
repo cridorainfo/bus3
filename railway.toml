@@ -1,0 +1,9 @@
+# Monorepo: cloud admin lives in cloud/. GitHub deploys use repo root + /Dockerfile.
+# Alternative: set Railway Root Directory to cloud and deploy with Nixpacks instead.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+watchPatterns = ["cloud/**"]
+
+[deploy]
+restartPolicyType = "ON_FAILURE"

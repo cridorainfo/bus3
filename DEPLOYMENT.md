@@ -55,13 +55,18 @@ into — no other config changes needed once it's mounted, just redeploy (`railw
 
 ### 1.4 Deploying (and redeploying after changes)
 
-From the repo root (not from inside `cloud/` — Railway's CLI upload root didn't reliably follow
-`cd` in testing):
+**GitHub auto-deploy (recommended):** push to `main`. The repo includes a root `Dockerfile` +
+`railway.toml` so Railway builds `cloud/` from the monorepo root — no Root Directory setting
+required in the dashboard.
+
+**CLI deploy** from the repo root:
 ```
-railway up cloud --path-as-root --service cloud --ci
+railway up --service cloud --ci
 ```
-`--path-as-root` tells Railway to treat `cloud/` as the build root instead of the whole repo
-(otherwise Railpack can't detect a buildable app among `hub/`/`firmware/`/docs at the top level).
+Alternative (Nixpacks, no Docker): `railway up cloud --path-as-root --service cloud --ci`
+
+Do **not** deploy from repo root without the Dockerfile — Railpack can't find a `package.json`
+at the top level and the build fails in ~3 seconds.
 
 ### 1.5 Domain
 
