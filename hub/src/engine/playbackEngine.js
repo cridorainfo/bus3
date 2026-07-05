@@ -103,8 +103,13 @@ function handleForward() {
 
   const trip = state.trip;
   const stops = tripEngine.getStopsForRoute(trip.route_id, trip.direction);
+  if (stops.length === 0) return;
+
   const prevIndex = trip.current_stop_index;
   const newIndex = Math.min(prevIndex + 1, stops.length - 1);
+  // Announce the stop currently shown as "next" (prevIndex), then advance the pointer — not the
+  // stop after it, which made every Forward sound like two stops (old next + new next).
+  const stopToAnnounce = stops[prevIndex];
 
   const anchor = state.segmentAnchorAt || now;
   const segmentDurationSec = (now - anchor) / 1000;
@@ -115,19 +120,27 @@ function handleForward() {
 
   db.prepare('UPDATE trips SET current_stop_index = ? WHERE trip_id = ?').run(newIndex, trip.trip_id);
 
-  const stop = stops[newIndex];
-  const announcement = composeAnnouncement(stop);
+  const announcement = composeAnnouncement(stopToAnnounce);
   const ad = contentScheduler.selectScreenAd({ routeId: trip.route_id, tier: busTier(), busId: getDeviceConfig()?.bus_id });
 
   for (const seg of announcement) {
-    writePlayLog({ tripId: trip.trip_id, contentId: seg.content_id, campaignId: seg.campaign_id, stopId: stop.stop_id });
+    writePlayLog({ tripId: trip.trip_id, contentId: seg.content_id, campaignId: seg.campaign_id, stopId: stopToAnnounce.stop_id });
   }
   if (ad) {
-    writePlayLog({ tripId: trip.trip_id, contentId: ad.content_id, campaignId: ad.campaign_id, stopId: stop.stop_id });
+    writePlayLog({ tripId: trip.trip_id, contentId: ad.content_id, campaignId: ad.campaign_id, stopId: stopToAnnounce.stop_id });
   }
 
-  state.update({ trip: { ...trip, current_stop_index: newIndex }, segmentAnchorAt: now });
-  pushNowPlaying({ announcement, ad, stop });
+  state.update({
+    trip: { ...trip, current_stop_index: newIndex },
+    segmentAnchorAt: now,
+    nowPlaying: {
+      stop_id: stopToAnnounce.stop_id,
+      stop_name_ml: stopToAnnounce.name_ml,
+      announcement: announcement.map((s) => ({ content_id: s.content_id, file_path: s.file_path, duration_sec: s.duration_sec, type: s.type })),
+      ad: ad ? { content_id: ad.content_id, file_path: ad.file_path, duration_sec: ad.duration_sec, type: ad.type, display_mode: ad.display_mode } : null,
+      startedAt: now,
+    },
+  });
 }
 
 function handleUndo() {

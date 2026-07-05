@@ -257,6 +257,7 @@ adFullscreenImage.addEventListener('error', exitVideoMode);
 
 // --- Announcement audio (sequential segments through the single aux output) ---
 function playAudioQueue(segments) {
+  audioPlayer.pause();
   audioQueue = segments.slice();
   playNextInQueue();
 }
