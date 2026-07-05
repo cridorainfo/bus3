@@ -12,7 +12,7 @@ const router = express.Router();
 const UPLOAD_DIR = path.join(ASSETS_DIR, 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const ALLOWED_TYPES = ['chime', 'filler', 'stop_name', 'stop_name_ad', 'outro', 'ad_video', 'ad_banner', 'music'];
+const ALLOWED_TYPES = ['chime', 'filler', 'stop_name', 'stop_name_ad', 'outro', 'ad_video', 'ad_banner', 'ad_image', 'music'];
 
 // Stop-specific content (stop_name/stop_name_ad) needs to reach every bus on every route that
 // includes that stop — not just the one route it happened to be uploaded against, since stops
@@ -64,6 +64,7 @@ router.post('/', upload.single('file'), (req, res) => {
   }
 
   const contentId = req.file.filename.replace(path.extname(req.file.filename), '');
+  const resolvedDisplayMode = type === 'ad_image' ? 'fullscreen' : display_mode === 'fullscreen' ? 'fullscreen' : 'banner';
   db.prepare(`
     INSERT INTO content_items
       (content_id, type, file_path, original_filename, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id, target_bus_id, display_mode)
@@ -80,7 +81,7 @@ router.post('/', upload.single('file'), (req, res) => {
     route_id || null,
     stop_id || null,
     target_bus_id || null,
-    display_mode === 'fullscreen' ? 'fullscreen' : 'banner'
+    resolvedDisplayMode
   );
 
   pushForContent({ route_id: route_id || null, stop_id: stop_id || null, target_bus_id: target_bus_id || null });

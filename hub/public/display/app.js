@@ -222,14 +222,12 @@ function handleAd(ad) {
     // declared duration plus slack.
     clearTimeout(videoFailsafeTimer);
     videoFailsafeTimer = setTimeout(() => setVideoMode(false), ((ad.duration_sec || 30) + 5) * 1000);
-  } else if (ad.type === 'ad_banner' && ad.display_mode === 'fullscreen') {
+  } else if (ad.type === 'ad_image' || (ad.type === 'ad_banner' && ad.display_mode === 'fullscreen')) {
     adFullscreenImage.src = ad.file_path;
     setVideoMode(true, 'image');
-    // A static image has no natural 'ended' event — this failsafe is the real return-to-normal
-    // trigger client-side, while the Hub's own idle-tick timer (keyed to this same duration_sec)
-    // is what actually rotates in a new ad server-side around the same time.
+    // Static fullscreen image — no natural 'ended' event; return after the admin-set duration.
     clearTimeout(videoFailsafeTimer);
-    videoFailsafeTimer = setTimeout(() => setVideoMode(false), ((ad.duration_sec || 8) + 1) * 1000);
+    videoFailsafeTimer = setTimeout(() => setVideoMode(false), ((ad.duration_sec || 30) + 1) * 1000);
   } else if (ad.type === 'ad_banner') {
     lastBannerAd = ad;
     adBanner.src = ad.file_path;

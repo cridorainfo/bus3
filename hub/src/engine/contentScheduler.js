@@ -21,13 +21,13 @@ function hasQuotaRemaining(campaignId) {
 }
 
 // Section 10's ordering: eligibility -> quota -> frequency cap -> weighted pick -> fallback.
-// Screen ads only (ad_video/ad_banner) — announcement segments are handled separately by
+// Screen ads only (ad_video/ad_banner/ad_image) — announcement segments are handled separately by
 // playbackEngine's composeAnnouncement, since those are mandatory, not rotated.
 function selectScreenAd({ routeId, tier }) {
   const candidates = db
     .prepare(`
       SELECT * FROM content_items
-      WHERE type IN ('ad_video', 'ad_banner')
+      WHERE type IN ('ad_video', 'ad_banner', 'ad_image')
         AND (route_id IS NULL OR route_id = ?)
         AND (tier IS NULL OR tier = ?)
     `)
@@ -48,7 +48,7 @@ function selectScreenAd({ routeId, tier }) {
 
   // Never repeat the same content_id twice in a row if any alternative exists.
   const lastPlayed = db
-    .prepare("SELECT content_id FROM play_logs WHERE content_id IN (SELECT content_id FROM content_items WHERE type IN ('ad_video','ad_banner')) ORDER BY played_at DESC LIMIT 1")
+    .prepare("SELECT content_id FROM play_logs WHERE content_id IN (SELECT content_id FROM content_items WHERE type IN ('ad_video','ad_banner','ad_image')) ORDER BY played_at DESC LIMIT 1")
     .get();
   const finalPool =
     pool.length > 1 && lastPlayed ? pool.filter((c) => c.content_id !== lastPlayed.content_id) : pool;
@@ -71,7 +71,7 @@ function weightedPick(pool) {
 // Never dead air, never a frozen screen (spec Section 10, step 5).
 function selectFallback() {
   const psa = db
-    .prepare("SELECT * FROM content_items WHERE type IN ('ad_video','ad_banner') AND campaign_id IS NULL LIMIT 1")
+    .prepare("SELECT * FROM content_items WHERE type IN ('ad_video','ad_banner','ad_image') AND campaign_id IS NULL LIMIT 1")
     .get();
   return psa || null;
 }

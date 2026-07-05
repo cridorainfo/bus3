@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS route_stops (
 
 CREATE TABLE IF NOT EXISTS content_items (
     content_id        TEXT PRIMARY KEY,
-    type              TEXT NOT NULL, -- chime | filler | stop_name | stop_name_ad | outro | ad_video | ad_banner | music
+    type              TEXT NOT NULL, -- chime | filler | stop_name | stop_name_ad | outro | ad_video | ad_banner | ad_image | music
     file_path         TEXT NOT NULL, -- served at /content/<file_path>
     original_filename  TEXT,
     duration_sec      REAL,

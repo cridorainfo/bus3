@@ -90,7 +90,7 @@ function isTypingInAdminForm() {
   const el = document.activeElement;
   if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return false;
   return !!el.closest(
-    '#form-add-bus, #form-pair-bus, #form-add-route, #form-ad-timing, #form-add-banner, #form-add-fullscreen, #form-add-announcement, #form-add-campaign, .edit-bus-form, .edit-route-form, .edit-stop-form, .edit-route-stop-form, .edit-campaign-form, .stop-search-input, .route-search-input, #stopnames-search, .new-stop-ml, .new-stop-en'
+    '#form-add-bus, #form-pair-bus, #form-add-route, #form-ad-timing, #form-push-sync, #form-add-banner, #form-add-fullscreen, #form-add-announcement, #form-add-campaign, .edit-bus-form, .edit-route-form, .edit-stop-form, .edit-route-stop-form, .edit-campaign-form, .stop-search-input, .route-search-input, #stopnames-search, .new-stop-ml, .new-stop-en'
   );
 }
 
@@ -106,6 +106,7 @@ async function loadBuses() {
   renderBuses();
   populatePairBusSelect();
   populateBusTargetSelects();
+  populatePushSyncBuses();
   loadPendingPairings();
 }
 
@@ -355,6 +356,16 @@ document.getElementById('form-add-bus').addEventListener('submit', async (e) => 
 
 // --- Pair a Bus: the Hub generates and shows its own pairing ID (no keyboard needed at the
 // unattended kiosk PC) — the admin reads that ID and picks which bus record it links to. ---
+function populatePushSyncBuses() {
+  const sel = document.getElementById('push-sync-buses');
+  if (!sel) return;
+  const selected = new Set(Array.from(sel.selectedOptions).map((o) => o.value));
+  sel.innerHTML = state.buses.map((b) => `<option value="${b.bus_id}">${escapeHtml(b.friendly_name || b.reg_number)} (${escapeHtml(b.reg_number)})</option>`).join('');
+  for (const opt of sel.options) {
+    if (selected.has(opt.value)) opt.selected = true;
+  }
+}
+
 function populatePairBusSelect() {
   const sel = document.getElementById('pair-bus-select');
   // Preserve the current selection only if it's still a valid option after refresh — restoring
@@ -1069,15 +1080,39 @@ document.getElementById('form-add-banner').addEventListener('submit', async (e) 
 function renderFullscreenList() {
   const list = document.getElementById('fullscreen-list');
   list.innerHTML = '';
-  const items = state.content.filter((c) => ['ad_video', 'music'].includes(c.type));
+  const items = state.content.filter((c) => ['ad_video', 'ad_image', 'music'].includes(c.type));
   if (items.length === 0) {
     list.appendChild(el(`<div class="empty-state">No full-screen ads uploaded yet.</div>`));
     return;
   }
   for (const item of items) {
-    list.appendChild(contentCard(item, { scopeLabel: targetingScopeLabel(item) }));
+    const durationLabel = item.duration_sec ? `${item.duration_sec}s` : '';
+    const typeLabel = item.type === 'ad_image' ? 'Image' : item.type === 'music' ? 'Music (legacy)' : 'Video';
+    list.appendChild(contentCard(item, { scopeLabel: `${targetingScopeLabel(item)}${durationLabel ? ' · ' + durationLabel : ''} · ${typeLabel}` }));
   }
 }
+
+function updateFullscreenFormForType() {
+  const type = document.getElementById('fullscreen-type').value;
+  const fileInput = document.getElementById('fullscreen-file');
+  const fileLabel = document.getElementById('fullscreen-file-label');
+  const durationLabel = document.getElementById('fullscreen-duration-label');
+  const durationInput = document.getElementById('fullscreen-duration');
+  if (type === 'ad_image') {
+    fileLabel.textContent = 'Image file';
+    fileInput.accept = 'image/png,image/jpeg,image/webp';
+    durationLabel.textContent = 'Display duration (seconds)';
+    durationInput.title = 'How long the image stays fullscreen before returning to stop info.';
+  } else {
+    fileLabel.textContent = 'Video file';
+    fileInput.accept = 'video/mp4,video/webm';
+    durationLabel.textContent = 'Failsafe duration (seconds)';
+    durationInput.title = 'Max time if the video never ends or fails to load.';
+  }
+}
+
+document.getElementById('fullscreen-type').addEventListener('change', updateFullscreenFormForType);
+updateFullscreenFormForType();
 
 document.getElementById('form-add-fullscreen').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1094,9 +1129,39 @@ document.getElementById('form-add-fullscreen').addEventListener('submit', async 
     await api('/api/content', { method: 'POST', body: fd });
     document.getElementById('form-add-fullscreen').reset();
     document.getElementById('form-add-fullscreen').querySelectorAll('[data-targeting-scope]').forEach((f) => (f.style.display = 'none'));
+    updateFullscreenFormForType();
     hint.textContent = 'Uploaded — pushed live to matching buses that are online.';
     hint.className = 'hint success';
     loadContent();
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
+
+document.getElementById('push-sync-scope').addEventListener('change', (e) => {
+  document.getElementById('push-sync-bus-wrap').style.display = e.target.value === 'selected' ? '' : 'none';
+});
+
+document.getElementById('form-push-sync').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('push-sync-hint');
+  hint.textContent = 'Pushing…';
+  hint.className = 'hint';
+  try {
+    const scope = document.getElementById('push-sync-scope').value;
+    const body = scope === 'selected'
+      ? { bus_ids: Array.from(document.getElementById('push-sync-buses').selectedOptions).map((o) => o.value) }
+      : {};
+    if (scope === 'selected' && (!body.bus_ids || body.bus_ids.length === 0)) {
+      throw new Error('Select at least one bus.');
+    }
+    const result = await api('/api/sync/push', { method: 'POST', body: JSON.stringify(body) });
+    const pushed = result.pushed.length;
+    const offline = result.offline.length;
+    hint.textContent = `Sync pushed to ${pushed} online bus${pushed === 1 ? '' : 'es'}${offline ? ` (${offline} offline — will catch up on reconnect)` : ''}.`;
+    hint.className = 'hint success';
+    setTimeout(() => (hint.textContent = ''), 6000);
   } catch (err) {
     hint.textContent = err.message;
     hint.className = 'hint error';
@@ -1334,7 +1399,8 @@ document.getElementById('form-add-campaign').addEventListener('submit', async (e
 const TYPE_LABELS = {
   ad_banner: 'Banner/fullscreen image ads',
   ad_video: 'Full-screen video ads',
-  music: 'Music',
+  ad_image: 'Full-screen image ads',
+  music: 'Music (legacy)',
   stop_name: 'Stop name announcements',
   stop_name_ad: 'Stop name (sponsored) announcements',
   chime: 'Chimes', filler: 'Fillers', outro: 'Outros',

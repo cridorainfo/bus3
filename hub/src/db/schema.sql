@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS route_stops (
 
 CREATE TABLE IF NOT EXISTS content_items (
     content_id     TEXT PRIMARY KEY,
-    type           TEXT NOT NULL,           -- chime | filler | stop_name | stop_name_ad | outro | ad_video | ad_banner | music | sponsor_snippet(legacy)
+    type           TEXT NOT NULL,           -- chime | filler | stop_name | stop_name_ad | outro | ad_video | ad_banner | ad_image | music | sponsor_snippet(legacy)
     file_path      TEXT NOT NULL,
     duration_sec   REAL,
     tier           TEXT,

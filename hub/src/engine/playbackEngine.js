@@ -179,13 +179,14 @@ function adIntervalMs() {
   return (Number.isFinite(sec) && sec >= 10 ? sec : 60) * 1000;
 }
 
-// A banner/fullscreen image ad with its own admin-set duration_sec is the real rotation driver
-// for that ad specifically (measured from when it actually started showing, nowPlaying.startedAt)
-// — otherwise fall back to the fleet-wide ad_interval_sec, measured from the last idle tick.
-// Video/music ads always rotate via their own 'ended' event on the Display, never this timer.
+// Video ads rotate via the player's 'ended' event; fullscreen images use duration_sec only.
 function idleAdTickIfDue() {
   const currentAd = state.nowPlaying && state.nowPlaying.ad;
-  const usesOwnDuration = !!(currentAd && currentAd.type === 'ad_banner' && currentAd.duration_sec);
+  const usesOwnDuration = !!(
+    currentAd &&
+    currentAd.duration_sec &&
+    (currentAd.type === 'ad_image' || (currentAd.type === 'ad_banner' && currentAd.display_mode === 'fullscreen'))
+  );
   const intervalMs = usesOwnDuration ? Math.max(currentAd.duration_sec, 3) * 1000 : adIntervalMs();
   const referenceAt = usesOwnDuration && state.nowPlaying.startedAt ? state.nowPlaying.startedAt : lastIdleAdAt;
 

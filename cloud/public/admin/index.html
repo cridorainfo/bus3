@@ -119,6 +119,22 @@
         <span class="hint" id="ad-timing-hint" style="margin:0;align-self:center"></span>
       </form>
 
+      <form id="form-push-sync" class="card form-inline">
+        <div class="field">
+          <label>Push sync to</label>
+          <select id="push-sync-scope">
+            <option value="all">All buses</option>
+            <option value="selected">Selected buses…</option>
+          </select>
+        </div>
+        <div class="field" id="push-sync-bus-wrap" style="display:none;min-width:220px">
+          <label>Buses (Ctrl+click)</label>
+          <select id="push-sync-buses" multiple size="4" style="min-width:220px"></select>
+        </div>
+        <button type="submit" class="btn btn-primary">Push sync now</button>
+        <span class="hint" id="push-sync-hint" style="margin:0;align-self:center"></span>
+      </form>
+
       <nav class="subtabs">
         <button class="subtab active" data-subtab="announcement">Announcement Audio</button>
         <button class="subtab" data-subtab="stopnames">Stop Names</button>
@@ -232,20 +248,20 @@
         <div id="banner-list" class="stack"></div>
       </section>
 
-      <!-- --- Full-Screen (Video) Ads --- -->
+      <!-- --- Full-Screen Ads (video + image) --- -->
       <section id="subtab-fullscreen" class="subtab-panel">
-        <p class="subtitle">Full-screen video ads (and background music) that rotate on the passenger display.</p>
+        <p class="subtitle">Full-screen video or image ads that take over the passenger display center area. Images show for the duration you set, then return to stop info.</p>
         <form id="form-add-fullscreen" class="card form-inline" enctype="multipart/form-data">
           <div class="field">
             <label>Type</label>
             <select id="fullscreen-type">
               <option value="ad_video">Video ad</option>
-              <option value="music">Music</option>
+              <option value="ad_image">Image ad</option>
             </select>
           </div>
           <div class="field">
-            <label>Failsafe duration (seconds)</label>
-            <input type="number" id="fullscreen-duration" min="5" step="1" value="30" title="Only used if the file fails to load or never fires its own 'ended' event — normally the video/audio just plays to its natural end." />
+            <label id="fullscreen-duration-label">Failsafe duration (seconds)</label>
+            <input type="number" id="fullscreen-duration" min="5" step="1" value="30" title="For video: max time if the file never ends. For image: how long the image stays fullscreen." />
           </div>
           <div class="field">
             <label>Campaign</label>
@@ -276,7 +292,7 @@
             <label>Bus</label>
             <select id="fullscreen-target-bus"></select>
           </div>
-          <div class="field"><label>Video/audio file</label><input type="file" id="fullscreen-file" required /></div>
+          <div class="field"><label id="fullscreen-file-label">Video file</label><input type="file" id="fullscreen-file" accept="video/mp4,video/webm" required /></div>
           <button type="submit" class="btn btn-primary">Upload</button>
         </form>
         <div id="fullscreen-upload-hint" class="hint"></div>
