@@ -344,14 +344,13 @@ async function applySyncState(payload) {
       if (failedReplacement) continue;
       nullPlayLogContentRef.run(row.content_id);
       deleteContentItem.run(row.content_id);
-      if (row.file_path) {
-        const localPath = path.join(ASSETS_DIR, row.file_path.replace(/^\//, ''));
-        fs.unlink(localPath, () => {}); // best-effort; a missing file shouldn't block the DB delete
-      }
+      unlinkContentFile(row.file_path);
     }
   })();
 
+  enforceSingleGlobalClipPerType(contentItems, downloadOkById, nullPlayLogContentRef, deleteContentItem);
   dedupeGlobalAnnouncementClips(nullPlayLogContentRef, deleteContentItem);
+  purgeOrphanAssetFiles();
 
   db.prepare("UPDATE device_config SET last_sync_at = datetime('now') WHERE bus_id = ?").run(busId);
 
@@ -386,6 +385,50 @@ function sameContentScope(a, b) {
     && (a.tier || null) === (b.tier || null);
 }
 
+function unlinkContentFile(filePath) {
+  if (!filePath) return;
+  const localPath = path.join(ASSETS_DIR, filePath.replace(/^\//, ''));
+  fs.unlink(localPath, () => {});
+}
+
+function enforceSingleGlobalClipPerType(contentItems, downloadOkById, nullPlayLogContentRef, deleteContentItem) {
+  for (const type of GLOBAL_ANNOUNCE_TYPES) {
+    const incoming = (contentItems || []).filter(
+      (c) => c.type === type && !c.route_id && !c.stop_id && downloadOkById.get(c.content_id)
+    );
+    if (incoming.length === 0) continue;
+    const keepId = incoming[0].content_id;
+    const locals = db.prepare(`
+      SELECT content_id, file_path FROM content_items
+      WHERE type = ? AND route_id IS NULL AND stop_id IS NULL
+    `).all(type);
+    for (const row of locals) {
+      if (row.content_id === keepId) continue;
+      nullPlayLogContentRef.run(row.content_id);
+      deleteContentItem.run(row.content_id);
+      unlinkContentFile(row.file_path);
+    }
+  }
+}
+
+function purgeOrphanAssetFiles() {
+  const referenced = new Set(
+    db.prepare('SELECT file_path FROM content_items').all()
+      .map((row) => path.basename(row.file_path))
+      .filter(Boolean)
+  );
+  for (const sub of ['audio', 'media']) {
+    const dir = path.join(ASSETS_DIR, sub);
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir)) {
+      if (name.startsWith('.')) continue;
+      if (!referenced.has(name)) {
+        fs.unlink(path.join(dir, name), () => {});
+      }
+    }
+  }
+}
+
 function dedupeGlobalAnnouncementClips(nullPlayLogContentRef, deleteContentItem) {
   for (const type of GLOBAL_ANNOUNCE_TYPES) {
     const rows = db.prepare(`
@@ -396,10 +439,7 @@ function dedupeGlobalAnnouncementClips(nullPlayLogContentRef, deleteContentItem)
     for (let i = 1; i < rows.length; i += 1) {
       nullPlayLogContentRef.run(rows[i].content_id);
       deleteContentItem.run(rows[i].content_id);
-      if (rows[i].file_path) {
-        const localPath = path.join(ASSETS_DIR, rows[i].file_path.replace(/^\//, ''));
-        fs.unlink(localPath, () => {});
-      }
+      unlinkContentFile(rows[i].file_path);
     }
   }
 }

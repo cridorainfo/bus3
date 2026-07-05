@@ -31,13 +31,21 @@ function composeAnnouncement(stop) {
   for (const type of types) {
     let item = null;
     if (type === 'chime' || type === 'filler' || type === 'outro') {
-      // Prefer cloud-synced clips over seeded *-default placeholders when both exist locally.
+      // Never play seeded placeholders when a cloud-synced clip exists for this slot.
       item = db.prepare(`
         SELECT * FROM content_items
         WHERE type = ? AND route_id IS NULL AND stop_id IS NULL
+          AND (
+            content_id NOT LIKE '%-default'
+            OR NOT EXISTS (
+              SELECT 1 FROM content_items c2
+              WHERE c2.type = ? AND c2.route_id IS NULL AND c2.stop_id IS NULL
+                AND c2.content_id NOT LIKE '%-default'
+            )
+          )
         ORDER BY CASE WHEN content_id LIKE '%-default' THEN 1 ELSE 0 END, content_id DESC
         LIMIT 1
-      `).get(type);
+      `).get(type, type);
     } else if (type === 'stop_name') {
       if (stop.ads_enabled) {
         item = db.prepare('SELECT * FROM content_items WHERE type = ? AND stop_id = ? LIMIT 1').get('stop_name_ad', stop.stop_id);
