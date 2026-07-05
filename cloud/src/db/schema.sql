@@ -45,9 +45,22 @@ CREATE TABLE IF NOT EXISTS content_items (
     campaign_id       TEXT,
     route_id          TEXT REFERENCES routes(route_id),
     stop_id           TEXT REFERENCES stops(stop_id),
+    target_bus_id     TEXT REFERENCES buses(bus_id), -- single-bus ad targeting (mutually exclusive with route_id/tier in the UI)
+    display_mode      TEXT DEFAULT 'banner', -- ad_banner images only: 'banner' (bottom strip) | 'fullscreen' (center, like video)
     active_from       TEXT,
     active_to         TEXT,
     uploaded_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS campaigns (
+    campaign_id      TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    advertiser_name  TEXT,
+    rate_paisa       INTEGER NOT NULL DEFAULT 25,
+    budget_paisa     INTEGER,              -- NULL = unlimited/free
+    spent_paisa      INTEGER NOT NULL DEFAULT 0,
+    active           INTEGER NOT NULL DEFAULT 1,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Bus Management (spec 12) + live status fields, updated in near-real-time by the Hub's sync
@@ -135,6 +148,13 @@ CREATE TABLE IF NOT EXISTS play_logs (
     billable             INTEGER,
     received_at          TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(bus_id, hub_log_id)
+);
+
+-- Fleet-wide behavior settings (e.g. ad_interval_sec — how often the screen rotates ads),
+-- editable from Admin's Content tab and shipped to every bus inside sync_state.
+CREATE TABLE IF NOT EXISTS settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
 );
 
 -- Hub software releases (the Hub's *code*, not its data — routes/stops/content already sync

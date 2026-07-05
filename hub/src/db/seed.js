@@ -7,8 +7,10 @@
 const db = require('./db');
 
 function seed() {
-  seedDeviceIdentityFromEnv();
+  // Route first: the dev-shortcut identity below now also mirrors R1 into assigned_routes,
+  // which has a foreign key on routes — inserting it before R1 exists fails on a fresh DB.
   seedDemoRoute();
+  seedDeviceIdentityFromEnv();
 }
 
 function seedDeviceIdentityFromEnv() {
@@ -22,6 +24,12 @@ function seedDeviceIdentityFromEnv() {
     INSERT INTO device_config (bus_id, reg_number, api_key, route_assigned, hardware_version, esp32_vid, esp32_pid, last_sync_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
   `).run(busId, process.env.HUB_REG_NUMBER || 'KL07AX1234', process.env.HUB_CLOUD_API_KEY || null, 'R1', 'v1', '10C4', 'EA60');
+
+  // A real (cloud-synced) bus gets this via syncAgent's applySyncState; this dev shortcut skips
+  // the cloud entirely, so it has to seed the same local mirror by hand — otherwise the Panel's
+  // route picker (which reads from assigned_routes, not device_config.route_assigned) shows
+  // "No routes assigned" despite a trip against R1 working fine underneath.
+  db.prepare('INSERT OR IGNORE INTO assigned_routes (route_id) VALUES (?)').run('R1');
 }
 
 function seedDemoRoute() {

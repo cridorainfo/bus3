@@ -81,7 +81,6 @@ function connect() {
   ws = socket;
 
   socket.on('open', () => {
-    reconnectDelay = RECONNECT_BASE_MS;
     socket.send(JSON.stringify({ type: 'hello', bus_id: getBusId(), api_key: getApiKey() }));
     console.log(`[syncAgent] connected to cloud at ${CLOUD_WS_URL}`);
   });
@@ -94,6 +93,12 @@ function connect() {
       return;
     }
     if (msg.type === 'sync_state') {
+      // Only reset backoff once the cloud has actually accepted this Hub's credentials (the
+      // `hello` handshake succeeded) — resetting it just because the TCP/WS socket opened meant
+      // an identity the cloud rejects (e.g. a stale/unknown bus_id) would retry almost every
+      // RECONNECT_BASE_MS forever instead of backing off, since open+reject+close happens fast.
+      reconnectDelay = RECONNECT_BASE_MS;
+      if (!state.cloudOnline) state.update({ cloudOnline: true }); // accepted handshake = genuinely online, not just socket-open
       applySyncState(msg.payload).catch((err) => console.warn('[syncAgent] failed to apply sync_state:', err.message));
     } else if (msg.type === 'report_ack') {
       markSynced();
@@ -114,6 +119,7 @@ function connect() {
   socket.on('close', () => {
     if (ws !== socket) return; // a newer socket has already superseded this stale one — nothing to do
     ws = null;
+    if (state.cloudOnline) state.update({ cloudOnline: false }); // Display's status pill flips to "No Internet"
     // Nothing valid to reconnect with once unpaired — or about to be, the moment the trip
     // that's holding it off ends (see handleUnpaired) — so don't spam retries with credentials
     // the cloud has already invalidated. pairingAgent will register a fresh identity and the
@@ -178,8 +184,37 @@ const deleteRouteStop = db.prepare('DELETE FROM route_stops WHERE route_id = ? A
 // active locally (see select-route in api/routes/trip.js) — this just makes sure every assigned
 // route's stops/content are downloaded and ready, whichever one gets picked.
 async function applySyncState(payload) {
-  const { bus, routes, content_items: contentItems } = payload;
+  const { bus, routes, content_items: contentItems, settings, campaigns, campaign_quotas: campaignQuotas } = payload;
   const incomingRouteIds = new Set((routes || []).map((r) => r.route_id));
+
+  // Fleet-wide behavior knobs (e.g. ad_interval_sec) — mirrored locally so they keep applying
+  // offline; playbackEngine reads them fresh each use, so no restart needed.
+  if (settings && typeof settings === 'object') {
+    const upsertSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    for (const [key, value] of Object.entries(settings)) upsertSetting.run(key, String(value));
+  }
+
+  // Campaigns (budget/rate/unlimited-or-not) and today's per-bus quota — enough for
+  // contentScheduler.hasQuotaRemaining() to decide locally, with zero live cloud round-trip.
+  const upsertCampaign = db.prepare(`
+    INSERT INTO campaigns (campaign_id, name, rate_paisa, budget_paisa, active) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(campaign_id) DO UPDATE SET name = excluded.name, rate_paisa = excluded.rate_paisa,
+      budget_paisa = excluded.budget_paisa, active = excluded.active
+  `);
+  for (const c of campaigns || []) {
+    upsertCampaign.run(c.campaign_id, c.name, c.rate_paisa, c.budget_paisa ?? null, c.active ? 1 : 0);
+  }
+
+  // Keyed by (campaign_id, date) — a new day is naturally a new row, so plays_used starts fresh
+  // without an explicit reset; an existing today's row only has plays_allotted refreshed, never
+  // plays_used, so an admin topping up mid-day doesn't erase what's already been played today.
+  const upsertQuota = db.prepare(`
+    INSERT INTO campaign_quotas (campaign_id, date, plays_allotted, plays_used) VALUES (?, date('now'), ?, 0)
+    ON CONFLICT(campaign_id, date) DO UPDATE SET plays_allotted = excluded.plays_allotted
+  `);
+  for (const q of campaignQuotas || []) {
+    upsertQuota.run(q.campaign_id, q.plays_allotted);
+  }
 
   for (const route of routes || []) {
     db.prepare(`
@@ -224,11 +259,24 @@ async function applySyncState(payload) {
     db.prepare('UPDATE device_config SET route_assigned = NULL WHERE bus_id = ?').run(busId);
   }
 
+  // And the inverse: an admin assigning routes only populates assigned_routes — nothing picked
+  // an *active* one, so the Panel header sat on "No route assigned" until the driver manually
+  // used the dropdown even when there was only one obvious choice. Auto-activate the first
+  // assigned route whenever none is active (never mid-trip); the dropdown still switches freely.
+  const cfgAfterClear = getDeviceConfig();
+  if (!cfgAfterClear.route_assigned && incomingRouteIds.size > 0 && !state.trip) {
+    const firstAssigned = db.prepare('SELECT route_id FROM assigned_routes ORDER BY route_id LIMIT 1').get();
+    if (firstAssigned) {
+      db.prepare('UPDATE device_config SET route_assigned = ? WHERE bus_id = ?').run(firstAssigned.route_id, busId);
+    }
+  }
+
   if (bus) {
-    db.prepare('UPDATE device_config SET reg_number = ?, friendly_name = ?, connect_code = ? WHERE bus_id = ?').run(
+    db.prepare('UPDATE device_config SET reg_number = ?, friendly_name = ?, connect_code = ?, tier = ? WHERE bus_id = ?').run(
       bus.reg_number,
       bus.friendly_name || null,
       bus.connect_code || null,
+      bus.tier || 'rural',
       busId
     );
 
@@ -241,6 +289,35 @@ async function applySyncState(payload) {
       console.log('[syncAgent] admin disconnected all paired phones for this bus');
     }
   }
+
+  // Reconcile local content_items to exactly match what's incoming — mirrors the route_stops/
+  // assigned_routes reconciliation above. The incoming list is already scoped to what's relevant
+  // to this bus (global + assigned routes/stops), so anything local that's missing is either a
+  // genuine cloud-side delete or the bus simply lost access (route unassigned, etc.) — both cases
+  // should remove the local copy identically, same as route_stops already does.
+  const incomingContentIds = new Set((contentItems || []).map((c) => c.content_id));
+  const localContentRows = db.prepare('SELECT content_id, file_path FROM content_items').all();
+  const deleteContentItem = db.prepare('DELETE FROM content_items WHERE content_id = ?');
+  db.transaction(() => {
+    for (const row of localContentRows) {
+      if (incomingContentIds.has(row.content_id)) continue;
+      try {
+        deleteContentItem.run(row.content_id);
+      } catch (err) {
+        // A Hub whose local DB predates the loosened play_logs.content_id reference (see
+        // schema.sql) can still have historical play_logs rows pointing at this content_id,
+        // which blocks the delete under a still-enforced FK — skip this one row rather than
+        // aborting the whole reconciliation; it's retried (and typically still blocked) on every
+        // future sync, which is harmless since a stale row like this is cosmetic, not functional.
+        console.warn(`[syncAgent] could not delete stale content_item ${row.content_id}: ${err.message}`);
+        continue;
+      }
+      if (row.file_path) {
+        const localPath = path.join(ASSETS_DIR, row.file_path.replace(/^\//, ''));
+        fs.unlink(localPath, () => {}); // best-effort; a missing file shouldn't block the DB delete
+      }
+    }
+  })();
 
   for (const item of contentItems || []) {
     await ensureContentDownloaded(item);
@@ -286,11 +363,12 @@ async function ensureContentDownloaded(item) {
   }
 
   db.prepare(`
-    INSERT INTO content_items (content_id, type, file_path, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id)
-    VALUES (@content_id, @type, @file_path, @duration_sec, @tier, @advertiser_id, @campaign_id, @route_id, @stop_id)
+    INSERT INTO content_items (content_id, type, file_path, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id, target_bus_id, display_mode)
+    VALUES (@content_id, @type, @file_path, @duration_sec, @tier, @advertiser_id, @campaign_id, @route_id, @stop_id, @target_bus_id, @display_mode)
     ON CONFLICT(content_id) DO UPDATE SET type = excluded.type, file_path = excluded.file_path,
       duration_sec = excluded.duration_sec, tier = excluded.tier, advertiser_id = excluded.advertiser_id,
-      campaign_id = excluded.campaign_id, route_id = excluded.route_id, stop_id = excluded.stop_id
+      campaign_id = excluded.campaign_id, route_id = excluded.route_id, stop_id = excluded.stop_id,
+      target_bus_id = excluded.target_bus_id, display_mode = excluded.display_mode
   `).run({
     content_id: item.content_id,
     type: item.type,
@@ -301,6 +379,8 @@ async function ensureContentDownloaded(item) {
     campaign_id: item.campaign_id ?? null,
     route_id: item.route_id ?? null,
     stop_id: item.stop_id ?? null,
+    target_bus_id: item.target_bus_id ?? null,
+    display_mode: item.display_mode || 'banner',
   });
 }
 
@@ -359,4 +439,6 @@ function markSynced() {
   }
 }
 
-module.exports = { start, connectIfPaired };
+// requestLocalUnpair: same deferred-until-idle reset as an admin-pushed 'unpaired' message —
+// used by the driver-initiated Disconnect-from-Server button (api/routes/pairing.js).
+module.exports = { start, connectIfPaired, requestLocalUnpair: handleUnpaired };

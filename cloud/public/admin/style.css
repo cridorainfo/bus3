@@ -102,6 +102,10 @@ html, body {
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 
+.targeting-field { min-width: 320px; }
+.targeting-radios { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 6px; }
+.targeting-radios label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; text-transform: none; color: var(--ink); letter-spacing: normal; }
+
 input[type="text"], input[type="number"], input[type="file"], select {
   padding: 10px 12px;
   border-radius: 10px;

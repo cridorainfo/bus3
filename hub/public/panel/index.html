@@ -38,18 +38,13 @@
         <button class="segment" data-direction="return">Coming Back</button>
       </div>
       <button id="btn-start-trip" class="big-btn green">Start Trip</button>
-      <button id="btn-end-trip" class="big-btn red">End Trip</button>
+      <button id="btn-forward" class="big-btn green" style="display:none">Forward — Next Stop</button>
+      <div id="secondary-trip-actions" class="secondary-actions" style="display:none">
+        <button id="btn-undo" class="secondary-btn">⟲ Undo</button>
+        <button id="btn-announce" class="secondary-btn">🔊 Repeat Announcement</button>
+      </div>
+      <button id="btn-end-trip" class="big-btn red" style="display:none">End Trip</button>
       <div class="hint" id="trip-hint"></div>
-    </section>
-
-    <section id="screen-correction" class="screen">
-      <div class="label">Jump to stop</div>
-      <div id="stop-list"></div>
-    </section>
-
-    <section id="screen-mute" class="screen">
-      <div class="label">Audio</div>
-      <button id="btn-mute-toggle" class="big-btn">Mute</button>
     </section>
 
     <section id="screen-issue" class="screen">
@@ -57,13 +52,17 @@
       <textarea id="issue-text" rows="4" placeholder="What's wrong?"></textarea>
       <button id="btn-submit-issue" class="big-btn green">Submit</button>
       <div class="hint" id="issue-hint"></div>
+
+      <div class="danger-zone">
+        <div class="label">Server pairing</div>
+        <p class="hint" style="text-align:left">Disconnecting this bus from the AdKerala server makes its screen show a new pairing ID — an admin must pair it again from the dashboard. Every connected phone (including this one) is disconnected too. Only for hardware swaps or depot instructions.</p>
+        <button id="btn-unpair-server" class="big-btn red">Disconnect Hub from Server</button>
+      </div>
     </section>
   </main>
 
   <nav id="tab-bar">
     <button class="tab active" data-screen="screen-trip">Trip</button>
-    <button class="tab" data-screen="screen-correction">Correct</button>
-    <button class="tab" data-screen="screen-mute">Mute</button>
     <button class="tab" data-screen="screen-issue">Report</button>
   </nav>
 

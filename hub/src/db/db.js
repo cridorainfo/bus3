@@ -31,6 +31,9 @@ ensureColumn('device_config', 'friendly_name', 'friendly_name TEXT');
 ensureColumn('device_config', 'api_key', 'api_key TEXT');
 ensureColumn('device_config', 'connect_code', 'connect_code TEXT');
 ensureColumn('device_config', 'devices_disconnect_last_applied', 'devices_disconnect_last_applied TEXT');
+ensureColumn('device_config', 'tier', "tier TEXT DEFAULT 'rural'");
+ensureColumn('content_items', 'target_bus_id', 'target_bus_id TEXT');
+ensureColumn('content_items', 'display_mode', "display_mode TEXT DEFAULT 'banner'");
 
 // One-time backfill: stops used to belong to exactly one route (stops.route_id/sequence_no).
 // Now that ordering lives in route_stops, carry forward any stop that predates this change and

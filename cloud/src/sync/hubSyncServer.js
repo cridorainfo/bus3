@@ -1,5 +1,6 @@
 const WebSocket = require('ws');
 const db = require('../db/db');
+const { currentSettings } = require('../settingsStore');
 
 // Live bus_id -> socket map, so an admin action (assign route, edit a stop, upload content)
 // can push an updated `sync_state` to a connected bus immediately (the "real-time while the
@@ -15,10 +16,17 @@ function buildSyncState(busId) {
 
   const assignedRouteIds = db.prepare('SELECT route_id FROM bus_routes WHERE bus_id = ?').all(busId).map((r) => r.route_id);
 
+  // Ad targeting is single-select per content item (all buses / one tier / one route / one bus)
+  // — this clause excludes anything targeted at a *different* bus or a *different* tier than
+  // this one, applied to every content query below regardless of its route/stop scope.
+  const targetingClause = 'AND (target_bus_id IS NULL OR target_bus_id = @busId) AND (tier IS NULL OR tier = @tier)';
+  const targetingParams = { busId, tier: bus.tier || null };
+
   const contentMap = new Map();
   // Truly global content (chime/filler/outro) ships regardless of route assignment, so a bus
-  // can play something sensible the moment a route is assigned.
-  for (const item of db.prepare('SELECT * FROM content_items WHERE route_id IS NULL AND stop_id IS NULL').all()) {
+  // can play something sensible the moment a route is assigned — this bucket also carries
+  // tier-targeted and bus-targeted ads, since neither sets route_id/stop_id.
+  for (const item of db.prepare(`SELECT * FROM content_items WHERE route_id IS NULL AND stop_id IS NULL ${targetingClause}`).all(targetingParams)) {
     contentMap.set(item.content_id, item);
   }
 
@@ -37,14 +45,44 @@ function buildSyncState(busId) {
       .all(routeId);
     routes.push({ route_id: route.route_id, name: route.name, name_ml: route.name_ml, tier: route.tier, stops });
 
-    for (const item of db.prepare('SELECT * FROM content_items WHERE route_id = ?').all(routeId)) {
+    for (const item of db.prepare(`SELECT * FROM content_items WHERE route_id = @routeId ${targetingClause}`).all({ routeId, ...targetingParams })) {
       contentMap.set(item.content_id, item);
     }
     for (const stop of stops) {
-      for (const item of db.prepare('SELECT * FROM content_items WHERE stop_id = ?').all(stop.stop_id)) {
+      for (const item of db.prepare(`SELECT * FROM content_items WHERE stop_id = @stopId ${targetingClause}`).all({ stopId: stop.stop_id, ...targetingParams })) {
         contentMap.set(item.content_id, item);
       }
     }
+  }
+
+  // --- Campaign budget/quota (simplified Pacing Engine — recomputed on every sync, no nightly
+  // batch job): an inactive campaign's content doesn't ship at all; an unlimited (budget_paisa
+  // NULL) campaign needs no quota row, since the hub already knows "unlimited" from the
+  // campaign row itself; a budgeted campaign gets this bus's rounded-down share of what's left. ---
+  const campaignIds = new Set(Array.from(contentMap.values()).map((c) => c.campaign_id).filter(Boolean));
+  const campaigns = [];
+  const campaignQuotas = [];
+  for (const campaignId of campaignIds) {
+    const campaign = db.prepare('SELECT * FROM campaigns WHERE campaign_id = ?').get(campaignId);
+    if (!campaign) continue; // unknown campaign_id — leave its content as-is; hub fails open (unlimited) for an unrecognized campaign
+
+    if (!campaign.active) {
+      for (const [id, item] of contentMap) {
+        if (item.campaign_id === campaignId) contentMap.delete(id);
+      }
+      continue;
+    }
+    campaigns.push(campaign);
+    if (campaign.budget_paisa == null) continue; // unlimited/free — no quota needed
+
+    const remainingPaisa = Math.max(0, campaign.budget_paisa - campaign.spent_paisa);
+    const playsRemainingTotal = Math.floor(remainingPaisa / campaign.rate_paisa);
+    // v1 assumption: one campaign maps to one targeting scope — resolved from whichever
+    // content_item referencing it is present (see the plan's known limitation if that's ever violated).
+    const representativeItem = Array.from(contentMap.values()).find((c) => c.campaign_id === campaignId);
+    const eligibleBusIds = representativeItem ? eligibleBusIdsForItem(representativeItem) : [busId];
+    const playsAllotted = Math.floor(playsRemainingTotal / Math.max(1, eligibleBusIds.length));
+    campaignQuotas.push({ campaign_id: campaignId, plays_allotted: playsAllotted });
   }
 
   return {
@@ -60,8 +98,21 @@ function buildSyncState(busId) {
       },
       routes,
       content_items: Array.from(contentMap.values()),
+      campaigns,
+      campaign_quotas: campaignQuotas,
+      settings: currentSettings(), // fleet-wide knobs, e.g. ad_interval_sec — see settingsStore.js
     },
   };
+}
+
+// Which buses are eligible for a given content item's own targeting (route/tier/specific-bus,
+// or "all buses" when none is set) — used to split a campaign's remaining budget fairly across
+// however many buses could actually play it.
+function eligibleBusIdsForItem(item) {
+  if (item.target_bus_id) return [item.target_bus_id];
+  if (item.route_id) return busIdsAffectedByRoute(item.route_id);
+  if (item.tier) return db.prepare('SELECT bus_id FROM buses WHERE tier = ?').all(item.tier).map((r) => r.bus_id);
+  return busIdsAffectedByRoute(null); // null = every bus, same resolution the push-targeting helper already uses
 }
 
 function pushSyncStateToBus(busId) {
@@ -141,15 +192,29 @@ function storeReportedTrips(busId, trips) {
   tx(trips);
 }
 
+const findExistingPlayLog = db.prepare('SELECT 1 FROM play_logs WHERE bus_id = ? AND hub_log_id = ?');
+const insertOrReplacePlayLog = db.prepare(`
+  INSERT OR REPLACE INTO play_logs
+    (bus_id, hub_log_id, trip_id, content_id, campaign_id, stop_id, played_at, duration_played_sec, billable, received_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+`);
+const incrementCampaignSpend = db.prepare('UPDATE campaigns SET spent_paisa = spent_paisa + ? WHERE campaign_id = ?');
+const getCampaignRate = db.prepare('SELECT rate_paisa FROM campaigns WHERE campaign_id = ?');
+
 function storeReportedPlayLogs(busId, logs) {
-  const stmt = db.prepare(`
-    INSERT OR REPLACE INTO play_logs
-      (bus_id, hub_log_id, trip_id, content_id, campaign_id, stop_id, played_at, duration_played_sec, billable, received_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `);
   const tx = db.transaction((rows) => {
     for (const l of rows) {
-      stmt.run(busId, l.log_id, l.trip_id, l.content_id, l.campaign_id, l.stop_id, l.played_at, l.duration_played_sec, l.billable ? 1 : 0);
+      // A dropped ack (see syncAgent.js's reportUp/markSynced) can resend the same log more than
+      // once — INSERT OR REPLACE keeps storage itself idempotent via the (bus_id, hub_log_id)
+      // UNIQUE constraint, but billing needs the same guarantee explicitly: only ever charge a
+      // campaign for a play the very first time this exact log is seen, never on a resend/replace.
+      const alreadyStored = !!findExistingPlayLog.get(busId, l.log_id);
+      insertOrReplacePlayLog.run(busId, l.log_id, l.trip_id, l.content_id, l.campaign_id, l.stop_id, l.played_at, l.duration_played_sec, l.billable ? 1 : 0);
+
+      if (!alreadyStored && l.billable && l.campaign_id) {
+        const campaign = getCampaignRate.get(l.campaign_id);
+        if (campaign) incrementCampaignSpend.run(campaign.rate_paisa, l.campaign_id);
+      }
     }
   });
   tx(logs);

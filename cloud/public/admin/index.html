@@ -13,6 +13,8 @@
       <button class="tab active" data-tab="buses">Buses</button>
       <button class="tab" data-tab="routes">Routes</button>
       <button class="tab" data-tab="content">Content</button>
+      <button class="tab" data-tab="campaigns">Campaigns</button>
+      <button class="tab" data-tab="analytics">Analytics</button>
       <button class="tab" data-tab="updates">Updates</button>
     </nav>
   </header>
@@ -104,6 +106,15 @@
         <p class="subtitle">Organized the way the audio actually works: common announcement clips, per-stop names, and the two ad formats.</p>
       </div>
 
+      <form id="form-ad-timing" class="card form-inline">
+        <div class="field">
+          <label>Rotate screen ads every (seconds)</label>
+          <input type="number" id="ad-interval-sec" min="10" max="3600" step="5" required />
+        </div>
+        <button type="submit" class="btn btn-primary">Save</button>
+        <span class="hint" id="ad-timing-hint" style="margin:0;align-self:center"></span>
+      </form>
+
       <nav class="subtabs">
         <button class="subtab active" data-subtab="announcement">Announcement Audio</button>
         <button class="subtab" data-subtab="stopnames">Stop Names</button>
@@ -168,20 +179,47 @@
 
       <!-- --- Banner Ads --- -->
       <section id="subtab-banner" class="subtab-panel">
-        <p class="subtitle">Static banner images shown on the passenger display.</p>
+        <p class="subtitle">Image ads shown on the passenger display — either as a small bottom banner, or fullscreen (center, like a video ad). Each rotates on its own display duration.</p>
         <form id="form-add-banner" class="card form-inline" enctype="multipart/form-data">
           <div class="field">
-            <label>Route (optional = global)</label>
-            <select id="banner-route"><option value="">— Global —</option></select>
+            <label>Display style</label>
+            <select id="banner-display-mode">
+              <option value="banner">Bottom banner</option>
+              <option value="fullscreen">Fullscreen (center)</option>
+            </select>
           </div>
           <div class="field">
+            <label>Display duration (seconds)</label>
+            <input type="number" id="banner-duration" min="3" step="1" value="8" required />
+          </div>
+          <div class="field">
+            <label>Campaign</label>
+            <select id="banner-campaign"><option value="">— No campaign (PSA) —</option></select>
+          </div>
+          <div class="field targeting-field">
+            <label>Show on</label>
+            <div class="targeting-radios">
+              <label><input type="radio" name="banner-target-scope" value="all" checked /> All buses</label>
+              <label><input type="radio" name="banner-target-scope" value="tier" /> By tier</label>
+              <label><input type="radio" name="banner-target-scope" value="route" /> By route</label>
+              <label><input type="radio" name="banner-target-scope" value="bus" /> Specific bus</label>
+            </div>
+          </div>
+          <div class="field" data-targeting-scope="tier" style="display:none">
             <label>Tier</label>
             <select id="banner-tier">
-              <option value="">Any</option>
               <option value="rural">Rural</option>
               <option value="urban_standard">Urban standard</option>
               <option value="urban_women_premium">Urban women-premium</option>
             </select>
+          </div>
+          <div class="field" data-targeting-scope="route" style="display:none">
+            <label>Route</label>
+            <select id="banner-route"></select>
+          </div>
+          <div class="field" data-targeting-scope="bus" style="display:none">
+            <label>Bus</label>
+            <select id="banner-target-bus"></select>
           </div>
           <div class="field"><label>Image file</label><input type="file" id="banner-file" accept="image/*" required /></div>
           <button type="submit" class="btn btn-primary">Upload</button>
@@ -202,17 +240,37 @@
             </select>
           </div>
           <div class="field">
-            <label>Route (optional = global)</label>
-            <select id="fullscreen-route"><option value="">— Global —</option></select>
+            <label>Failsafe duration (seconds)</label>
+            <input type="number" id="fullscreen-duration" min="5" step="1" value="30" title="Only used if the file fails to load or never fires its own 'ended' event — normally the video/audio just plays to its natural end." />
           </div>
           <div class="field">
+            <label>Campaign</label>
+            <select id="fullscreen-campaign"><option value="">— No campaign (PSA) —</option></select>
+          </div>
+          <div class="field targeting-field">
+            <label>Show on</label>
+            <div class="targeting-radios">
+              <label><input type="radio" name="fullscreen-target-scope" value="all" checked /> All buses</label>
+              <label><input type="radio" name="fullscreen-target-scope" value="tier" /> By tier</label>
+              <label><input type="radio" name="fullscreen-target-scope" value="route" /> By route</label>
+              <label><input type="radio" name="fullscreen-target-scope" value="bus" /> Specific bus</label>
+            </div>
+          </div>
+          <div class="field" data-targeting-scope="tier" style="display:none">
             <label>Tier</label>
             <select id="fullscreen-tier">
-              <option value="">Any</option>
               <option value="rural">Rural</option>
               <option value="urban_standard">Urban standard</option>
               <option value="urban_women_premium">Urban women-premium</option>
             </select>
+          </div>
+          <div class="field" data-targeting-scope="route" style="display:none">
+            <label>Route</label>
+            <select id="fullscreen-route"></select>
+          </div>
+          <div class="field" data-targeting-scope="bus" style="display:none">
+            <label>Bus</label>
+            <select id="fullscreen-target-bus"></select>
           </div>
           <div class="field"><label>Video/audio file</label><input type="file" id="fullscreen-file" required /></div>
           <button type="submit" class="btn btn-primary">Upload</button>
@@ -221,6 +279,34 @@
         <div id="fullscreen-list" class="stack"></div>
       </section>
 
+    </section>
+
+    <!-- ===================== CAMPAIGNS ===================== -->
+    <section id="tab-campaigns" class="tab-panel">
+      <div class="panel-head">
+        <h1>Ad Campaigns</h1>
+        <p class="subtitle">Budgets and billing for ads tied to a campaign. Content with no campaign (PSA/house ads) always plays for free, unaffected by anything here.</p>
+      </div>
+      <form id="form-add-campaign" class="card form-inline">
+        <div class="field"><label>Name</label><input type="text" id="campaign-name" required /></div>
+        <div class="field"><label>Advertiser</label><input type="text" id="campaign-advertiser" /></div>
+        <div class="field"><label>Rate (paise/play)</label><input type="number" id="campaign-rate" min="1" step="1" value="25" required /></div>
+        <div class="field"><label>Budget (₹)</label><input type="number" id="campaign-budget" min="0" step="0.01" placeholder="e.g. 200" /></div>
+        <div class="field"><label><input type="checkbox" id="campaign-unlimited" /> Unlimited / free</label></div>
+        <button type="submit" class="btn btn-primary">Create campaign</button>
+      </form>
+      <div id="campaign-upload-hint" class="hint"></div>
+      <div id="campaign-list" class="stack"></div>
+    </section>
+
+    <!-- ===================== ANALYTICS ===================== -->
+    <section id="tab-analytics" class="tab-panel">
+      <div class="panel-head">
+        <h1>Play-Count Analytics</h1>
+        <p class="subtitle">How many times each announcement/ad has played, fleet-wide, based on plays reported up from every bus.</p>
+      </div>
+      <div id="analytics-summary" class="stack"></div>
+      <div id="analytics-by-content" class="stack"></div>
     </section>
 
     <!-- ===================== UPDATES ===================== -->

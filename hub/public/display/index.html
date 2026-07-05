@@ -23,19 +23,52 @@
   </div>
 
   <div id="normal-view">
-    <div id="route-name-label"></div>
-    <div id="paired-badge">✓ Paired with AdKerala</div>
-    <div id="connect-badge"><img src="/api/panel-qr.svg" alt="Scan to connect another phone" /></div>
+    <header id="top-bar">
+      <div class="top-left">
+        <div id="logo"><span class="logo-ad">Ad</span>Kerala</div>
+        <div id="status-pills">
+          <span class="pill ok" id="pill-paired">✓ Paired</span>
+          <span class="pill" id="pill-online">…</span>
+          <span class="pill warn" id="pill-updating" style="display:none">Updating…</span>
+        </div>
+        <div id="route-name-label"></div>
+      </div>
+      <div class="top-right">
+        <div id="clock-time">--:--:--</div>
+        <div id="clock-date"></div>
+      </div>
+    </header>
 
-    <div id="ad-area">
+    <main id="main-area">
+      <!-- Fullscreen (video) ads take over this whole center area while playing -->
       <video id="ad-video" muted playsinline></video>
-      <img id="ad-banner" alt="" />
-      <div id="idle-message">AdKerala</div>
-    </div>
+      <!-- Fullscreen image ads (admin-chosen display style) take over the same center area,
+           on their own admin-set duration timer instead of a video's 'ended' event -->
+      <img id="ad-fullscreen-image" alt="" />
 
-    <div id="progress-strip">
-      <div id="stops-track"></div>
-    </div>
+      <!-- Otherwise: the next stop, big, plus the whole route as a timeline -->
+      <div id="info-panel">
+        <div id="idle-branding">AdKerala</div>
+        <div id="next-stop-block" style="display:none">
+          <div class="next-stop-label">Next Stop</div>
+          <div id="next-stop-name">—</div>
+          <div id="next-stop-name-en"></div>
+        </div>
+        <div id="timeline"></div>
+      </div>
+    </main>
+
+    <footer id="bottom-strip">
+      <!-- Banner ads live here normally; while a fullscreen video ad is playing, the next-stop
+           details take this spot instead so passengers never lose sight of where they are. -->
+      <img id="ad-banner" alt="" />
+      <div id="mini-next-stop" style="display:none">
+        <span class="mini-label">Next Stop</span>
+        <span id="mini-next-stop-name">—</span>
+      </div>
+    </footer>
+
+    <div id="connect-badge"><img src="/api/panel-qr.svg" alt="Scan to connect another phone" /></div>
   </div>
 
   <audio id="audio-player"></audio>

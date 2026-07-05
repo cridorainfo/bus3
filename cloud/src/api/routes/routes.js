@@ -22,13 +22,32 @@ function pushToBusesOnRoute(routeId) {
   pushSyncStateToBuses(busIdsAffectedByRoute(routeId));
 }
 
+const firstStopStmt = db.prepare(`
+  SELECT s.name_en, s.name_ml FROM stops s JOIN route_stops rs ON rs.stop_id = s.stop_id
+  WHERE rs.route_id = ? ORDER BY rs.sequence_no ASC LIMIT 1
+`);
+const lastStopStmt = db.prepare(`
+  SELECT s.name_en, s.name_ml FROM stops s JOIN route_stops rs ON rs.stop_id = s.stop_id
+  WHERE rs.route_id = ? ORDER BY rs.sequence_no DESC LIMIT 1
+`);
+
 router.get('/', (req, res) => {
   const routes = db.prepare('SELECT * FROM routes ORDER BY created_at DESC').all();
-  const withCounts = routes.map((r) => ({
-    ...r,
-    stop_count: db.prepare('SELECT COUNT(*) c FROM route_stops WHERE route_id = ?').get(r.route_id).c,
-    bus_count: db.prepare('SELECT COUNT(*) c FROM buses WHERE route_id = ?').get(r.route_id).c,
-  }));
+  const withCounts = routes.map((r) => {
+    const first = firstStopStmt.get(r.route_id);
+    const last = lastStopStmt.get(r.route_id);
+    return {
+      ...r,
+      stop_count: db.prepare('SELECT COUNT(*) c FROM route_stops WHERE route_id = ?').get(r.route_id).c,
+      bus_count: db.prepare('SELECT COUNT(*) c FROM buses WHERE route_id = ?').get(r.route_id).c,
+      // Null when a route has 0-1 stops (first === last stop, not a meaningful "first/last") —
+      // feeds the bus-card route search and the "suggest name from stops" helper on the client.
+      first_stop_name_en: first ? first.name_en : null,
+      first_stop_name_ml: first ? first.name_ml : null,
+      last_stop_name_en: last ? last.name_en : null,
+      last_stop_name_ml: last ? last.name_ml : null,
+    };
+  });
   res.json(withCounts);
 });
 

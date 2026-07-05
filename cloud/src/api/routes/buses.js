@@ -51,6 +51,25 @@ router.post('/', (req, res) => {
   res.status(201).json(withComputedStatus(db.prepare('SELECT * FROM buses WHERE bus_id = ?').get(busId)));
 });
 
+// Editable after creation: friendly_name, tier, hardware_version. reg_number is intentionally
+// never read from the body here — it's the bus's permanent identity (part of its bus_id
+// generation at creation), so this endpoint can't touch it even by omission-then-oversight.
+router.put('/:busId', (req, res) => {
+  const bus = db.prepare('SELECT * FROM buses WHERE bus_id = ?').get(req.params.busId);
+  if (!bus) return res.status(404).json({ error: 'bus_not_found' });
+
+  const { friendly_name, tier, hardware_version } = req.body || {};
+  const nextFriendlyName = friendly_name !== undefined ? (friendly_name.trim() || null) : bus.friendly_name;
+  const nextTier = tier || bus.tier;
+  const nextHardwareVersion = hardware_version !== undefined ? (hardware_version.trim() || null) : bus.hardware_version;
+
+  db.prepare('UPDATE buses SET friendly_name = ?, tier = ?, hardware_version = ? WHERE bus_id = ?')
+    .run(nextFriendlyName, nextTier, nextHardwareVersion, bus.bus_id);
+  const pushed = pushSyncStateToBus(bus.bus_id);
+
+  res.json({ ...withComputedStatus(db.prepare('SELECT * FROM buses WHERE bus_id = ?').get(bus.bus_id)), pushed_live: pushed });
+});
+
 // A bus can run more than one route — the driver/conductor picks which one is active from
 // their phone, locally (hub/src/api/routes/trip.js's select-route), no cloud round-trip needed.
 router.post('/:busId/routes', (req, res) => {

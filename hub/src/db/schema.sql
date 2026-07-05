@@ -20,11 +20,19 @@ CREATE TABLE IF NOT EXISTS device_config (
     api_key                         TEXT,
     route_assigned                  TEXT,
     hardware_version                TEXT,
+    tier                            TEXT DEFAULT 'rural', -- synced from the cloud's buses.tier — read by ad targeting/selection
     esp32_vid                       TEXT,
     esp32_pid                       TEXT,
     last_sync_at                    TEXT,
     connect_code                    TEXT,    -- synced from cloud; what a phone's connect screen checks against
     devices_disconnect_last_applied TEXT     -- bookkeeping so a repeated sync doesn't re-clear paired_devices
+);
+
+-- Fleet-wide behavior settings synced down from the cloud (e.g. ad_interval_sec — how often
+-- the passenger screen rotates ads). Local mirror only; the cloud's Admin is the editor.
+CREATE TABLE IF NOT EXISTS settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
 );
 
 -- Holds the Hub's self-generated pairing ID while waiting to be claimed (kept stable across
@@ -92,8 +100,20 @@ CREATE TABLE IF NOT EXISTS content_items (
     campaign_id    TEXT,
     route_id       TEXT REFERENCES routes(route_id),
     stop_id        TEXT REFERENCES stops(stop_id),
+    target_bus_id  TEXT, -- no local `buses` table on the hub (its own identity lives in device_config) — plain value, cloud already scoped it correctly
+    display_mode   TEXT DEFAULT 'banner', -- ad_banner images only: 'banner' | 'fullscreen'
     active_from    TEXT,
     active_to      TEXT
+);
+
+-- Local mirror of the cloud's campaigns — enough to know a campaign is unlimited/free (no quota
+-- row needed at all) without waiting on a campaign_quotas row to show up.
+CREATE TABLE IF NOT EXISTS campaigns (
+    campaign_id   TEXT PRIMARY KEY,
+    name          TEXT,
+    rate_paisa    INTEGER NOT NULL DEFAULT 25,
+    budget_paisa  INTEGER,   -- NULL = unlimited/free
+    active        INTEGER NOT NULL DEFAULT 1
 );
 
 -- Inert in Phase 1 — scheduler always treats quota as unlimited until the Phase 3 Pacing Engine exists.
@@ -123,11 +143,14 @@ CREATE TABLE IF NOT EXISTS trips (
     synced              INTEGER NOT NULL DEFAULT 0
 );
 
--- Append-only billing ledger. Never delete before synced=1.
+-- Append-only billing ledger. Never delete before synced=1. content_id is a loose reference
+-- (no FK, matching the cloud's own play_logs schema) — a content_item can legitimately be
+-- deleted from the cloud (and cascade-deleted from every Hub, see syncAgent.js's applySyncState)
+-- after it's already been played and logged; the historical log row must survive that deletion.
 CREATE TABLE IF NOT EXISTS play_logs (
     log_id               INTEGER PRIMARY KEY AUTOINCREMENT,
     trip_id              INTEGER REFERENCES trips(trip_id),
-    content_id           TEXT REFERENCES content_items(content_id),
+    content_id           TEXT,
     campaign_id          TEXT,
     stop_id              TEXT REFERENCES stops(stop_id),
     played_at            TEXT NOT NULL DEFAULT (datetime('now')),

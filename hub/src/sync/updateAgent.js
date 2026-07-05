@@ -73,6 +73,7 @@ function start(hubAppDir) {
     const zipPath = path.join(RELEASES_DIR, `${manifest.version}.zip`);
     try {
       console.log(`[updateAgent] downloading v${manifest.version}…`);
+      state.update({ updating: true }); // Display's status bar shows "Updating…" while this runs
       const res = await fetch(`${CLOUD_HTTP_BASE}/api/hub-releases/${manifest.version}/download`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
@@ -90,6 +91,8 @@ function start(hubAppDir) {
       console.error(`[updateAgent] failed to stage v${manifest.version}:`, err.message);
       fs.rmSync(zipPath, { force: true });
       fs.rmSync(stagedDir, { recursive: true, force: true });
+    } finally {
+      state.update({ updating: false });
     }
   }
 

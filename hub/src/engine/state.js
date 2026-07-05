@@ -21,6 +21,8 @@ class HubState extends EventEmitter {
     this.contentVersion = 0; // bumped by syncAgent whenever route/stop/content data changes
     this.pairingId = null; // set by pairingAgent while unpaired — Display View shows this on screen
     this.connectedDeviceCount = db.prepare('SELECT COUNT(*) c FROM paired_devices').get().c;
+    this.cloudOnline = false; // true only while syncAgent has an accepted cloud connection — drives the Display's Online/No Internet pill
+    this.updating = false; // true while updateAgent is downloading/staging a release — drives the Display's Updating pill
   }
 
   snapshot() {
@@ -34,6 +36,8 @@ class HubState extends EventEmitter {
       contentVersion: this.contentVersion,
       pairingId: this.pairingId,
       connectedDeviceCount: this.connectedDeviceCount,
+      cloudOnline: this.cloudOnline,
+      updating: this.updating,
     };
   }
 

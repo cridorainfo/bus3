@@ -1,14 +1,43 @@
+/* AdKerala passenger display — green/white, modern & premium. Matches the Admin's palette
+   (deep greens on white) rather than the old dark kiosk look. */
+
+:root {
+  --green: #17864f;
+  --green-dark: #0f6b3e;
+  --green-deep: #0a4f2d;
+  --green-light: #e7f4ec;
+  --green-line: #cdeada;
+  --ink: #14231b;
+  --muted: #5f7367;
+  --bg: #f7fbf8;
+  --card: #ffffff;
+  --danger: #b3261e;
+  --amber: #f2a51a;
+  --shadow: 0 2px 6px rgba(20, 35, 27, 0.06), 0 12px 32px rgba(20, 35, 27, 0.07);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
   width: 1920px;
   height: 1080px;
   overflow: hidden;
-  background: #0a0a0f;
-  color: #f5f5f5;
+  background: var(--bg);
+  color: var(--ink);
   font-family: 'Segoe UI', Arial, sans-serif;
 }
 
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideFadeUp { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes busBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes busArrive { from { opacity: 0; transform: translateX(-46px); } to { opacity: 1; transform: none; } }
+@keyframes pulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(23, 134, 79, 0.35); }
+  70% { box-shadow: 0 0 0 16px rgba(23, 134, 79, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(23, 134, 79, 0); }
+}
+
+/* ===== Unpaired: big pairing ID (this PC's only screen — read-only, nothing typed here) ===== */
 #pairing-screen {
   display: none;
   width: 100%;
@@ -17,11 +46,11 @@ html, body {
   justify-content: center;
 }
 
-.pairing-box { text-align: center; }
+.pairing-box { text-align: center; animation: fadeIn 0.5s ease; }
 
 .pairing-label {
   font-size: 32px;
-  color: #9a9ab0;
+  color: var(--muted);
   letter-spacing: 4px;
   text-transform: uppercase;
   margin-bottom: 24px;
@@ -31,31 +60,17 @@ html, body {
   font-size: 160px;
   font-weight: 800;
   letter-spacing: 24px;
-  color: #ffb300;
+  color: var(--green-dark);
   font-family: 'Consolas', 'SFMono-Regular', monospace;
 }
 
 .pairing-hint {
   margin-top: 32px;
   font-size: 28px;
-  color: #6e6e80;
+  color: var(--muted);
 }
 
-#route-name-label {
-  position: absolute;
-  top: 20px;
-  left: 40px;
-  font-size: 28px;
-  font-weight: 700;
-  color: #f5f5f5;
-  background: rgba(10, 10, 15, 0.6);
-  padding: 8px 20px;
-  border-radius: 10px;
-  z-index: 2;
-}
-#route-name-label:empty { display: none; }
-
-/* --- Connect screen: shown once this Hub is paired but no phone has connected yet --- */
+/* ===== Paired but no phone connected yet: full-screen QR to the Control Panel ===== */
 #connect-screen {
   display: none;
   width: 100%;
@@ -64,14 +79,16 @@ html, body {
   justify-content: center;
 }
 
-.connect-box { text-align: center; max-width: 900px; }
+.connect-box { text-align: center; max-width: 900px; animation: fadeIn 0.5s ease; }
 
 #connect-qr {
   width: 420px;
   height: 420px;
-  background: #fff;
+  background: var(--card);
   padding: 24px;
-  border-radius: 16px;
+  border-radius: 20px;
+  border: 2px solid var(--green-line);
+  box-shadow: var(--shadow);
 }
 
 .connect-label {
@@ -79,91 +96,167 @@ html, body {
   font-size: 40px;
   font-weight: 800;
   letter-spacing: 2px;
-  color: #f5f5f5;
+  color: var(--green-dark);
 }
 
 .connect-hint {
   margin-top: 16px;
   font-size: 24px;
-  color: #9a9ab0;
+  color: var(--muted);
   line-height: 1.5;
 }
 
-/* --- Paired identity badge (top-right) — always visible once this Hub is paired, so it's
-   clear at a glance this isn't just a stray browser window. --- */
-#paired-badge {
-  position: absolute;
-  top: 20px;
-  right: 40px;
-  font-size: 20px;
-  font-weight: 700;
-  color: #6ea875;
-  background: rgba(10, 10, 15, 0.6);
-  padding: 8px 20px;
-  border-radius: 10px;
-  z-index: 2;
-}
-
-/* --- Small persistent QR badge — lets a second crew member (e.g. conductor after the driver's
-   already connected) still scan their way in, without the full connect screen taking over.
-   Stacked under the paired badge (both top-right) so neither ever overlaps the bottom
-   progress strip's stop dots. --- */
-#connect-badge {
+/* ===== Normal view layout: top bar / main area / bottom strip ===== */
+#normal-view {
   display: none;
-  position: absolute;
-  top: 78px;
-  right: 40px;
-  z-index: 2;
-  background: #fff;
-  padding: 8px;
-  border-radius: 10px;
-}
-#connect-badge img { width: 90px; height: 90px; display: block; }
-
-#normal-view { position: relative; width: 100%; height: 100%; }
-
-#ad-area {
   position: relative;
   width: 100%;
-  height: 82%; /* leaves the bottom strip for route progress, per spec Section 5 */
-  background: #000;
+  height: 100%;
+  flex-direction: column;
+}
+
+/* --- Top bar: logo + status pills + route (left), clock + date (right) --- */
+#top-bar {
+  height: 84px;
+  flex: 0 0 84px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  padding: 0 40px;
+  background: var(--card);
+  border-bottom: 2px solid var(--green-line);
+  box-shadow: 0 2px 10px rgba(20, 35, 27, 0.05);
+  z-index: 2;
+}
+
+.top-left { display: flex; align-items: center; gap: 28px; }
+
+#logo {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  color: var(--ink);
+}
+.logo-ad { color: var(--green); }
+
+#status-pills { display: flex; gap: 10px; }
+
+.pill {
+  font-size: 17px;
+  font-weight: 700;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: #eef2ef;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pill.ok { background: var(--green-light); color: var(--green-dark); }
+.pill.bad { background: #fbeae9; color: var(--danger); }
+.pill.warn { background: #fdf3dd; color: #9a6b00; }
+
+#route-name-label {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--green-deep);
+  padding-left: 24px;
+  border-left: 2px solid var(--green-line);
+}
+#route-name-label:empty { display: none; }
+
+.top-right { text-align: right; }
+
+#clock-time {
+  font-size: 40px;
+  font-weight: 800;
+  font-family: 'Consolas', 'SFMono-Regular', monospace;
+  color: var(--green-dark);
+  line-height: 1;
+}
+
+#clock-date {
+  font-size: 18px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* --- Main area: fullscreen video ad, or next stop + full-route timeline --- */
+#main-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #000;
   overflow: hidden;
 }
 
-#ad-video, #ad-banner {
+#ad-video {
+  display: none;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  animation: fadeIn 0.5s ease;
+}
+
+#ad-fullscreen-image {
   display: none;
-}
-
-#idle-message {
-  font-size: 64px;
-  font-weight: 700;
-  letter-spacing: 4px;
-  color: #3a3f52;
-}
-
-#progress-strip {
-  height: 18%;
   width: 100%;
-  background: linear-gradient(#14141c, #0d0d13);
-  border-top: 3px solid #262638;
-  display: flex;
-  align-items: center;
-  padding: 0 40px;
-  overflow: hidden;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  animation: fadeIn 0.5s ease;
 }
 
-#stops-track {
-  display: flex;
-  align-items: center;
+#info-panel {
   width: 100%;
-  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 64px;
+  background: linear-gradient(170deg, #ffffff 0%, var(--bg) 45%, var(--green-light) 130%);
+  animation: fadeIn 0.4s ease;
 }
+
+#idle-branding {
+  font-size: 96px;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: var(--green-line);
+}
+
+#next-stop-block { text-align: center; }
+
+.next-stop-label {
+  font-size: 34px;
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 18px;
+}
+
+#next-stop-name {
+  font-size: 130px;
+  font-weight: 800;
+  color: var(--green-dark);
+  line-height: 1.15;
+}
+#next-stop-name.animate { animation: slideFadeUp 0.6s ease; }
+
+#next-stop-name-en {
+  font-size: 44px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+/* --- Full-route timeline: every stop, completed → current → upcoming --- */
+#timeline {
+  display: flex;
+  align-items: flex-start;
+  width: 92%;
+  padding: 34px 20px 0; /* headroom for the bus icon riding above the current dot */
+}
+#timeline:empty { display: none; }
 
 .stop {
   display: flex;
@@ -177,50 +270,125 @@ html, body {
 .stop::before {
   content: '';
   position: absolute;
-  top: 18px;
+  top: 16px;
   left: -50%;
   width: 100%;
   height: 6px;
-  background: #3a3f52;
+  background: var(--green-line);
+  border-radius: 3px;
   z-index: -1;
+  transition: background 0.6s ease;
 }
 
 .stop:first-child::before { content: none; }
 
-.stop.done::before { background: #4caf50; }
-.stop.current::before { background: #4caf50; }
+.stop.done::before { background: var(--green); }
+.stop.current::before { background: var(--green); }
 
 .dot {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: #3a3f52;
-  border: 4px solid #14141c;
+  background: var(--card);
+  border: 4px solid var(--green-line);
+  transition: background 0.5s ease, border-color 0.5s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.stop.done .dot { background: #4caf50; }
-.stop.current .dot {
-  background: #ffb300;
-  width: 50px;
-  height: 50px;
-  box-shadow: 0 0 0 6px rgba(255, 179, 0, 0.25);
+/* Completed: solid green dot with a white check */
+.stop.done .dot { background: var(--green); border-color: var(--green); }
+.stop.done .dot::after {
+  content: '✓';
+  color: #fff;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
 }
+
+/* Current: bigger deep-green dot with a soft radar pulse, bus icon riding above it */
+.stop.current .dot {
+  background: var(--green-dark);
+  border-color: var(--green-dark);
+  width: 44px;
+  height: 44px;
+  margin-top: -5px;
+  animation: pulseRing 2s ease-out infinite;
+}
+
+.bus-marker {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  margin-left: -28px;
+  width: 56px;
+  animation: busArrive 0.5s ease, busBob 2.2s ease-in-out 0.5s infinite;
+}
+.bus-marker svg { width: 100%; height: auto; display: block; filter: drop-shadow(0 4px 6px rgba(20, 35, 27, 0.25)); }
 
 .stop-label {
-  margin-top: 10px;
+  margin-top: 12px;
   font-size: 20px;
   text-align: center;
-  color: #9a9ab0;
+  color: var(--muted);
   white-space: nowrap;
+  transition: color 0.5s ease;
 }
 
-.stop.done .stop-label { color: #6ea875; }
-.stop.current .stop-label { color: #ffd54f; font-size: 26px; font-weight: 700; }
-.stop.final .stop-label { color: #f5f5f5; font-weight: 700; }
+.stop.done .stop-label { color: var(--green); font-weight: 600; }
+.stop.current .stop-label { color: var(--green-deep); font-size: 26px; font-weight: 800; }
 
-.ellipsis {
-  flex: 0 0 60px;
-  text-align: center;
-  color: #5a5a70;
+/* --- Bottom strip: banner ads normally; next-stop details while a video ad is playing --- */
+#bottom-strip {
+  height: 130px;
+  flex: 0 0 130px;
+  background: var(--card);
+  border-top: 2px solid var(--green-line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#ad-banner {
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: fadeIn 0.5s ease;
+}
+
+#mini-next-stop {
+  display: none;
+  align-items: baseline;
+  gap: 28px;
+  animation: fadeIn 0.4s ease;
+}
+
+.mini-label {
   font-size: 28px;
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  color: var(--muted);
 }
+
+#mini-next-stop-name {
+  font-size: 62px;
+  font-weight: 800;
+  color: var(--green-dark);
+}
+
+/* --- Small persistent QR badge (second crew member can still scan in) --- */
+#connect-badge {
+  position: absolute;
+  top: 100px;
+  right: 40px;
+  z-index: 3;
+  background: var(--card);
+  padding: 8px;
+  border-radius: 12px;
+  border: 2px solid var(--green-line);
+  box-shadow: var(--shadow);
+}
+#connect-badge img { width: 90px; height: 90px; display: block; }

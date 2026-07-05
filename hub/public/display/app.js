@@ -1,9 +1,11 @@
-// AdKerala Display View — kiosk, FullHD. This is the Hub's only screen, so while unpaired it
-// shows the device's pairing ID (read-only — nothing is ever typed here) instead of the normal
-// view. Once paired: route name, the route-progress strip from current_stop_index (no GPS
-// needed), and whatever the Hub pushes as "nowPlaying" — the composed announcement audio,
-// sequentially, plus a screen ad (shown muted, since the single aux output is reserved for the
-// announcement voice — see hub/README.md).
+// AdKerala Display View — kiosk, FullHD (1920x1080). Three top-level states:
+//   1. Unpaired: shows this Hub's pairing ID (read-only — an admin claims it from the dashboard).
+//   2. Paired, no phone connected: full-screen QR straight to this bus's Control Panel.
+//   3. Normal: top bar (logo + status pills + route + clock/date), center area (fullscreen video
+//      ads when playing, otherwise the next stop big + the whole route as a timeline), bottom
+//      strip (banner ads normally; the next-stop details move down there while a video ad has
+//      the center, so passengers never lose sight of where they are).
+// Audio announcements play sequentially through the single aux output; video ads stay muted.
 
 const pairingScreen = document.getElementById('pairing-screen');
 const pairingIdValue = document.getElementById('pairing-id-value');
@@ -11,90 +13,182 @@ const connectScreen = document.getElementById('connect-screen');
 const connectBadge = document.getElementById('connect-badge');
 const normalView = document.getElementById('normal-view');
 const routeNameLabel = document.getElementById('route-name-label');
-const stopsTrack = document.getElementById('stops-track');
+const pillOnline = document.getElementById('pill-online');
+const pillUpdating = document.getElementById('pill-updating');
+const clockTime = document.getElementById('clock-time');
+const clockDate = document.getElementById('clock-date');
 const adVideo = document.getElementById('ad-video');
+const adFullscreenImage = document.getElementById('ad-fullscreen-image');
+const infoPanel = document.getElementById('info-panel');
+const idleBranding = document.getElementById('idle-branding');
+const nextStopBlock = document.getElementById('next-stop-block');
+const nextStopName = document.getElementById('next-stop-name');
+const nextStopNameEn = document.getElementById('next-stop-name-en');
+const timeline = document.getElementById('timeline');
 const adBanner = document.getElementById('ad-banner');
-const idleMessage = document.getElementById('idle-message');
+const miniNextStop = document.getElementById('mini-next-stop');
+const miniNextStopName = document.getElementById('mini-next-stop-name');
 const audioPlayer = document.getElementById('audio-player');
 
 let stopsCache = { routeId: null, contentVersion: -1, stops: [] };
 let audioQueue = [];
 let lastNowPlayingKey = null;
+let lastBannerAd = null; // banner ads persist in the bottom strip until replaced by a newer one
+let videoAdActive = false;
+let latestTrip = null;
 
-// Unpaired: this is the Hub's only screen, so its pairing ID (a smart-TV-style device code)
-// shows here, big and read-only — nothing is ever typed at this kiosk PC. An admin reads the
-// ID and claims it from the Admin dashboard against a bus record.
-//
-// Once paired, a second gate applies before showing ads/route content: no driver/conductor
-// phone has connected yet, so the full screen instead shows a QR code straight to this bus's
-// Control Panel (avoids anyone needing to be told an IP address to type in). The moment at
-// least one phone connects, this switches to the normal view — but keeps a small QR badge in a
-// corner so a second crew member (e.g. the conductor, after the driver's already connected) can
-// still scan their own way in independently.
+// --- Top-level screen switching ---
 function renderConnectionState(pairingId, connectedDeviceCount) {
   const unpaired = !!pairingId;
   const noDevicesYet = !unpaired && !connectedDeviceCount;
 
   pairingScreen.style.display = unpaired ? 'flex' : 'none';
   connectScreen.style.display = noDevicesYet ? 'flex' : 'none';
-  normalView.style.display = unpaired || noDevicesYet ? 'none' : 'block';
-  connectBadge.style.display = !unpaired && !noDevicesYet ? 'block' : 'none';
+  normalView.style.display = unpaired || noDevicesYet ? 'none' : 'flex';
 
   if (unpaired) pairingIdValue.textContent = pairingId;
 }
 
-function renderRouteName(bus) {
-  routeNameLabel.textContent = bus && bus.route_name ? bus.route_name : '';
+// --- Top bar ---
+function renderTopBar(state) {
+  routeNameLabel.textContent = state.bus && state.bus.route_name ? state.bus.route_name : '';
+
+  pillOnline.textContent = state.cloudOnline ? 'Online' : 'No Internet';
+  pillOnline.className = `pill ${state.cloudOnline ? 'ok' : 'bad'}`;
+
+  pillUpdating.style.display = state.updating ? 'inline-block' : 'none';
 }
 
-function renderProgressStrip(trip) {
-  stopsTrack.innerHTML = '';
-  if (!trip || stopsCache.routeId !== trip.route_id || stopsCache.stops.length === 0) return;
+function tickClock() {
+  const now = new Date();
+  clockTime.textContent = now.toLocaleTimeString('en-IN', { hour12: false });
+  clockDate.textContent = now.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+setInterval(tickClock, 1000);
+tickClock();
 
-  const stops = stopsCache.stops;
-  const currentIdx = trip.current_stop_index;
-  const lastIdx = stops.length - 1;
+// --- Next stop + full-route timeline ---
+function currentNextStop() {
+  if (!latestTrip || stopsCache.stops.length === 0) return null;
+  return stopsCache.stops[latestTrip.current_stop_index] || null;
+}
 
-  const windowStart = Math.max(0, currentIdx - 3);
-  const windowEnd = Math.min(lastIdx, currentIdx + 4);
-  const visibleIdx = [];
-  for (let i = windowStart; i <= windowEnd; i++) visibleIdx.push(i);
-
-  const includesFinal = visibleIdx.includes(lastIdx);
-
-  for (const i of visibleIdx) {
-    stopsTrack.appendChild(buildStopEl(stops[i], i, currentIdx, lastIdx));
-  }
-
-  if (!includesFinal) {
-    const ellipsis = document.createElement('div');
-    ellipsis.className = 'ellipsis';
-    ellipsis.textContent = '···';
-    stopsTrack.appendChild(ellipsis);
-    stopsTrack.appendChild(buildStopEl(stops[lastIdx], lastIdx, currentIdx, lastIdx));
+function renderNextStop() {
+  const stop = currentNextStop();
+  idleBranding.style.display = stop ? 'none' : 'block';
+  nextStopBlock.style.display = stop ? 'block' : 'none';
+  if (stop) {
+    // Re-trigger the slide/fade only when the stop actually changes — not on every state push.
+    if (nextStopName.textContent !== stop.name_ml) {
+      nextStopName.classList.remove('animate');
+      void nextStopName.offsetWidth; // forces a reflow so removing+re-adding restarts the animation
+      nextStopName.classList.add('animate');
+    }
+    nextStopName.textContent = stop.name_ml;
+    nextStopNameEn.textContent = stop.name_en || '';
+    miniNextStopName.textContent = stop.name_ml;
   }
 }
 
-function buildStopEl(stop, idx, currentIdx, lastIdx) {
-  const el = document.createElement('div');
-  const classes = ['stop'];
-  if (idx < currentIdx) classes.push('done');
-  if (idx === currentIdx) classes.push('current');
-  if (idx === lastIdx) classes.push('final');
-  el.className = classes.join(' ');
-  el.innerHTML = `<div class="dot"></div><div class="stop-label">${stop.name_ml}</div>`;
-  return el;
+// Little side-view bus that rides along the timeline, sitting above the current stop.
+const BUS_SVG = `
+<svg viewBox="0 0 56 34" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1" y="2" width="54" height="24" rx="6" fill="#0f6b3e"/>
+  <rect x="6" y="7" width="10" height="9" rx="2" fill="#ffffff"/>
+  <rect x="20" y="7" width="10" height="9" rx="2" fill="#ffffff"/>
+  <rect x="34" y="7" width="10" height="9" rx="2" fill="#ffffff"/>
+  <rect x="47" y="9" width="6" height="7" rx="2" fill="#e7f4ec"/>
+  <circle cx="14" cy="28" r="5" fill="#14231b"/>
+  <circle cx="14" cy="28" r="2" fill="#9a9ab0"/>
+  <circle cx="42" cy="28" r="5" fill="#14231b"/>
+  <circle cx="42" cy="28" r="2" fill="#9a9ab0"/>
+</svg>`;
+
+function renderTimeline() {
+  timeline.innerHTML = '';
+  if (!latestTrip || stopsCache.routeId !== latestTrip.route_id || stopsCache.stops.length === 0) return;
+
+  const currentIdx = latestTrip.current_stop_index;
+  stopsCache.stops.forEach((stop, idx) => {
+    const el = document.createElement('div');
+    const classes = ['stop'];
+    if (idx < currentIdx) classes.push('done'); // solid green + white check via CSS
+    if (idx === currentIdx) classes.push('current'); // pulsing dot + the bus riding above it
+    el.className = classes.join(' ');
+    const busMarker = idx === currentIdx ? `<div class="bus-marker">${BUS_SVG}</div>` : '';
+    el.innerHTML = `${busMarker}<div class="dot"></div><div class="stop-label">${stop.name_ml}</div>`;
+    timeline.appendChild(el);
+  });
 }
 
 async function ensureStopsLoaded(trip, contentVersion) {
   if (!trip) return;
-  const upToDate = stopsCache.routeId === trip.route_id && stopsCache.contentVersion === contentVersion && stopsCache.stops.length > 0;
+  // Direction is part of the cache key: /api/trip/state returns stops already ordered for the
+  // active trip's direction, so a "return" trip after a "going" one (same route, same content)
+  // MUST refetch — reusing the going-order list left the timeline running backwards.
+  const upToDate = stopsCache.routeId === trip.route_id && stopsCache.direction === trip.direction && stopsCache.contentVersion === contentVersion && stopsCache.stops.length > 0;
   if (upToDate) return;
   const res = await fetch('/api/trip/state');
   const data = await res.json();
-  stopsCache = { routeId: trip.route_id, contentVersion, stops: data.stops || [] };
+  stopsCache = { routeId: trip.route_id, direction: trip.direction, contentVersion, stops: data.stops || [] };
 }
 
+// --- Ads: fullscreen video/image takes the center; banners take the bottom strip ---
+// `mode` picks which center element is visible while the center is occupied: 'video' (default)
+// or 'image' (fullscreen-style ad_banner). Both share the same next-stop/banner-swap behavior.
+function setVideoMode(on, mode = 'video') {
+  videoAdActive = on;
+  adVideo.style.display = on && mode === 'video' ? 'block' : 'none';
+  adFullscreenImage.style.display = on && mode === 'image' ? 'block' : 'none';
+  infoPanel.style.display = on ? 'none' : 'flex';
+
+  // While the center is occupied, the next stop moves down into the banner's spot; the moment
+  // it clears, the banner comes back and the next stop returns to the center.
+  const hasNextStop = !!currentNextStop();
+  miniNextStop.style.display = on && hasNextStop ? 'flex' : 'none';
+  adBanner.style.display = !on && lastBannerAd ? 'block' : 'none';
+}
+
+let videoFailsafeTimer = null;
+
+function handleAd(ad) {
+  if (!ad) return;
+  if (ad.type === 'ad_video' || ad.type === 'music') {
+    if (adVideo.src !== new URL(ad.file_path, location.href).href) adVideo.src = ad.file_path;
+    setVideoMode(true, 'video');
+    adVideo.currentTime = 0;
+    adVideo.play().catch(() => {});
+    // Failsafe: if neither 'ended' nor 'error' ever fires (broken file, stalled load), never
+    // leave the center stuck on a dead video — force back to the info panel after the ad's
+    // declared duration plus slack.
+    clearTimeout(videoFailsafeTimer);
+    videoFailsafeTimer = setTimeout(() => setVideoMode(false), ((ad.duration_sec || 30) + 5) * 1000);
+  } else if (ad.type === 'ad_banner' && ad.display_mode === 'fullscreen') {
+    adFullscreenImage.src = ad.file_path;
+    setVideoMode(true, 'image');
+    // A static image has no natural 'ended' event — this failsafe is the real return-to-normal
+    // trigger client-side, while the Hub's own idle-tick timer (keyed to this same duration_sec)
+    // is what actually rotates in a new ad server-side around the same time.
+    clearTimeout(videoFailsafeTimer);
+    videoFailsafeTimer = setTimeout(() => setVideoMode(false), ((ad.duration_sec || 8) + 1) * 1000);
+  } else if (ad.type === 'ad_banner') {
+    lastBannerAd = ad;
+    adBanner.src = ad.file_path;
+    // Each stop picks one ad — a banner pick supersedes whatever video/fullscreen-image was (or
+    // was stuck) playing from the previous stop, which also guarantees stale center media can't linger.
+    setVideoMode(false);
+  }
+}
+
+function exitVideoMode() {
+  clearTimeout(videoFailsafeTimer);
+  setVideoMode(false);
+}
+
+adVideo.addEventListener('ended', exitVideoMode);
+adVideo.addEventListener('error', exitVideoMode); // a missing/broken file must never leave a black center
+
+// --- Announcement audio (sequential segments through the single aux output) ---
 function playAudioQueue(segments) {
   audioQueue = segments.slice();
   playNextInQueue();
@@ -110,28 +204,9 @@ function playNextInQueue() {
 audioPlayer.addEventListener('ended', playNextInQueue);
 audioPlayer.addEventListener('error', playNextInQueue); // missing placeholder file shouldn't stall the queue
 
-function showAd(ad) {
-  adVideo.style.display = 'none';
-  adBanner.style.display = 'none';
-  idleMessage.style.display = 'none';
-
-  if (!ad) {
-    idleMessage.style.display = 'block';
-    return;
-  }
-  if (ad.type === 'ad_video') {
-    adVideo.src = ad.file_path;
-    adVideo.style.display = 'block';
-    adVideo.play().catch(() => {});
-  } else {
-    adBanner.src = ad.file_path;
-    adBanner.style.display = 'block';
-  }
-}
-
 function handleNowPlaying(nowPlaying) {
   if (!nowPlaying) {
-    showAd(null);
+    if (videoAdActive) setVideoMode(false); // e.g. Undo cancelled whatever just started
     return;
   }
   const key = `${nowPlaying.stop_id || ''}:${nowPlaying.startedAt}`;
@@ -140,10 +215,11 @@ function handleNowPlaying(nowPlaying) {
     if (nowPlaying.announcement && nowPlaying.announcement.length > 0) {
       playAudioQueue(nowPlaying.announcement);
     }
+    handleAd(nowPlaying.ad);
   }
-  showAd(nowPlaying.ad);
 }
 
+// --- Live state over WebSocket ---
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -151,18 +227,20 @@ function connect() {
   ws.onmessage = async (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type !== 'state') return;
-    const { bus, trip, nowPlaying, contentVersion, pairingId, connectedDeviceCount } = msg.payload;
+    const payload = msg.payload;
 
-    renderConnectionState(pairingId, connectedDeviceCount);
-    if (pairingId || !connectedDeviceCount) return; // nothing else to render while showing the pairing/connect screen
+    renderConnectionState(payload.pairingId, payload.connectedDeviceCount);
+    if (payload.pairingId || !payload.connectedDeviceCount) return; // pairing/connect screen is up — nothing else to render
 
-    renderRouteName(bus);
-    await ensureStopsLoaded(trip, contentVersion);
-    renderProgressStrip(trip);
-    handleNowPlaying(nowPlaying);
+    latestTrip = payload.trip;
+    renderTopBar(payload);
+    await ensureStopsLoaded(payload.trip, payload.contentVersion);
+    renderNextStop();
+    renderTimeline();
+    handleNowPlaying(payload.nowPlaying);
   };
 
-  ws.onclose = () => setTimeout(connect, 2000); // kiosk browser never left alone to show a dead socket
+  ws.onclose = () => setTimeout(connect, 2000); // kiosk browser is never left alone to show a dead socket
 }
 
 connect();

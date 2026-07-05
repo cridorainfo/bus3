@@ -5,7 +5,14 @@
 // load (useful right after a brief WiFi drop reconnecting to the Hub) — every actual API call
 // still always goes straight to the network, exactly as if there were no service worker at all.
 
-const CACHE_NAME = 'adkerala-panel-shell-v1';
+// The version placeholder below is substituted with the Hub's own package.json version at
+// request time (see server.js's dedicated /panel/sw.js route, which serves this file
+// dynamically rather than as a static asset) — this file's bytes changing on every real release
+// is exactly what makes a driver's already-installed PWA notice there's an update and refresh
+// its cached shell at all. Browsers only re-run a service worker's install/cache-refresh cycle
+// when its own script bytes change; a hardcoded cache name here would leave every future
+// release invisible to a phone that already has this PWA installed.
+const CACHE_NAME = 'adkerala-panel-shell-__CACHE_VERSION__';
 const SHELL_FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.json', 'icon.svg'];
 
 // Resolved against this SW's own scope (e.g. http://host/panel/) into exact absolute pathnames

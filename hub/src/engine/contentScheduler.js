@@ -2,11 +2,22 @@ const db = require('../db/db');
 
 const FREQUENCY_CAP_MINUTES = Number(process.env.HUB_FREQUENCY_CAP_MINUTES || 20);
 
-// campaign_quotas is real schema (spec 9.2) but the Pacing Engine that fills it in doesn't exist
-// until Phase 3 — so every campaign is treated as having quota remaining. Swap this out for a
-// real lookup against campaign_quotas(date=today) once Phase 3 lands, no caller changes needed.
-function hasQuotaRemaining(_campaignId) {
-  return true;
+// Phase 3 Pacing Engine, simplified: the cloud computes each campaign's remaining budget into a
+// rounded-down daily quota per bus and ships it down in sync_state (see hubSyncServer.js's
+// buildSyncState); this just reads what's already local — no live cloud round-trip needed.
+function hasQuotaRemaining(campaignId) {
+  const campaign = db.prepare('SELECT * FROM campaigns WHERE campaign_id = ?').get(campaignId);
+  // Unknown campaign (not synced down yet) — fail open rather than blacking out content over a
+  // sync-timing gap; a genuinely-inactive/deleted campaign never reaches here since the cloud
+  // already excludes its content_items from sync_state entirely.
+  if (!campaign) return true;
+  if (campaign.budget_paisa == null) return true; // unlimited/free
+
+  const quota = db.prepare("SELECT * FROM campaign_quotas WHERE campaign_id = ? AND date = date('now')").get(campaignId);
+  // A budgeted campaign with no quota row yet for today (e.g. just created, sync still in
+  // flight) fails closed — never risk overspend during that lag window.
+  if (!quota) return false;
+  return quota.plays_used < quota.plays_allotted;
 }
 
 // Section 10's ordering: eligibility -> quota -> frequency cap -> weighted pick -> fallback.

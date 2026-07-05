@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../../db/db');
 const state = require('../../engine/state');
 const tripEngine = require('../../engine/tripEngine');
+const playbackEngine = require('../../engine/playbackEngine');
 const { getBusId, getDeviceConfig, getRouteName } = require('../../config/deviceConfig');
 const { requireDevice } = require('./auth');
 
@@ -61,6 +62,26 @@ router.post('/jump', requireDevice, (req, res) => {
   if (typeof index !== 'number') return res.status(400).json({ ok: false, error: 'index_required' });
   const clamped = tripEngine.jumpToStop(index);
   res.json({ ok: true, current_stop_index: clamped });
+});
+
+// Phone-side equivalents of the ESP32/Uno push switches — same engine functions, same
+// composed-announcement-plays-on-the-Display-View behavior either way. Forward advances one
+// stop and plays that stop's announcement once; Announcement replays the *current* stop's
+// announcement without moving; Undo steps back one stop and cancels whatever just started
+// playing from the last Forward (e.g. an accidental double-press).
+router.post('/forward', requireDevice, (req, res) => {
+  playbackEngine.handleForward();
+  res.json({ ok: true, current_stop_index: state.trip ? state.trip.current_stop_index : null });
+});
+
+router.post('/undo', requireDevice, (req, res) => {
+  playbackEngine.handleUndo();
+  res.json({ ok: true, current_stop_index: state.trip ? state.trip.current_stop_index : null });
+});
+
+router.post('/announce', requireDevice, (req, res) => {
+  playbackEngine.handleReplay();
+  res.json({ ok: true });
 });
 
 router.post('/mute', requireDevice, (req, res) => {

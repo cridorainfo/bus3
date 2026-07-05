@@ -1,8 +1,9 @@
-// AdKerala Control Panel — used by either driver or conductor (spec 7.1). Tab bar navigates
-// between screens; a one-time "connect to this bus" code gates the actions that change state
-// (start/end trip, route/direction, corrections, mute) — once connected, the phone stays
-// connected (localStorage, survives closing the browser) until it disconnects or an admin
-// disconnects every device on this bus. Viewing status/identity never requires it.
+// AdKerala Control Panel — used by either driver or conductor (spec 7.1). Two screens: Trip
+// (route/direction pickers, Start/Forward/Undo/Announcement/End) and Report (issue reporting +
+// the Disconnect-Hub-from-Server danger zone). A one-time "connect to this bus" code gates the
+// actions that change state — once connected, the phone stays connected (localStorage, survives
+// closing the browser) until it disconnects or an admin disconnects every device on this bus.
+// Viewing status/identity never requires it.
 
 const DEVICE_TOKEN_KEY = 'adkerala_device_token';
 
@@ -23,8 +24,10 @@ const els = {
   netPill: document.getElementById('net-pill'),
   currentStopName: document.getElementById('current-stop-name'),
   tripHint: document.getElementById('trip-hint'),
-  stopList: document.getElementById('stop-list'),
-  muteBtn: document.getElementById('btn-mute-toggle'),
+  btnStartTrip: document.getElementById('btn-start-trip'),
+  btnForward: document.getElementById('btn-forward'),
+  secondaryTripActions: document.getElementById('secondary-trip-actions'),
+  btnEndTrip: document.getElementById('btn-end-trip'),
   issueText: document.getElementById('issue-text'),
   issueHint: document.getElementById('issue-hint'),
   connectOverlay: document.getElementById('connect-overlay'),
@@ -196,17 +199,46 @@ function renderDirectionToggle() {
 }
 
 // --- Actions ---
-document.getElementById('btn-start-trip').addEventListener('click', () => {
+els.btnStartTrip.addEventListener('click', () => {
   runProtected(() => postJson('/api/trip/start', { direction: selectedDirection }));
 });
 
-document.getElementById('btn-end-trip').addEventListener('click', () => {
+els.btnEndTrip.addEventListener('click', () => {
   runProtected(() => postJson('/api/trip/end'));
 });
 
-els.muteBtn.addEventListener('click', () => {
-  const nextMuted = !(latestState && latestState.muted);
-  runProtected(() => postJson('/api/trip/mute', { muted: nextMuted }));
+// Phone-side equivalents of the ESP32/Uno push switches (only shown once a trip is active —
+// see renderTrip below). Forward advances one stop and plays that stop's announcement once on
+// the passenger Display View; Announcement replays the *current* stop's announcement without
+// moving, for when it needs to be heard again mid-travel; Undo steps back one stop, for an
+// accidental Forward press.
+document.getElementById('btn-forward').addEventListener('click', () => {
+  runProtected(() => postJson('/api/trip/forward'));
+});
+
+document.getElementById('btn-undo').addEventListener('click', () => {
+  runProtected(() => postJson('/api/trip/undo'));
+});
+
+document.getElementById('btn-announce').addEventListener('click', () => {
+  runProtected(() => postJson('/api/trip/announce'));
+});
+
+// Severs this bus's server pairing entirely (Report screen's danger zone) — after this the
+// Display View shows a fresh pairing ID and an admin must re-claim it from the dashboard. Every
+// connected phone (this one included) is disconnected as part of the reset, so also clear the
+// local token immediately rather than waiting to discover it via a 401.
+document.getElementById('btn-unpair-server').addEventListener('click', () => {
+  if (!confirm('Disconnect this bus from the AdKerala server? The screen will show a new pairing ID, an admin must pair it again, and every connected phone (including this one) will be disconnected.')) return;
+  runProtected(async () => {
+    const res = await postJson('/api/pair/unpair');
+    if (res.ok) {
+      localStorage.removeItem(DEVICE_TOKEN_KEY);
+      updateDisconnectVisibility();
+      showConnectOverlay();
+    }
+    return res;
+  });
 });
 
 document.getElementById('btn-submit-issue').addEventListener('click', async () => {
@@ -238,7 +270,13 @@ function renderStatusPills(state) {
 }
 
 function renderTrip(state) {
-  if (!state.trip) {
+  const tripActive = !!state.trip;
+  els.btnStartTrip.style.display = tripActive ? 'none' : 'block';
+  els.btnForward.style.display = tripActive ? 'block' : 'none';
+  els.secondaryTripActions.style.display = tripActive ? 'flex' : 'none';
+  els.btnEndTrip.style.display = tripActive ? 'block' : 'none';
+
+  if (!tripActive) {
     els.currentStopName.textContent = 'No active trip';
     els.tripHint.textContent = 'Tap Start Trip to begin';
     return;
@@ -251,38 +289,15 @@ function renderTrip(state) {
     : directionLabel;
 }
 
-function renderStopList(state) {
-  els.stopList.innerHTML = '';
-  if (!state.trip || stopsCache.stops.length === 0) {
-    els.stopList.innerHTML = '<div class="hint">Start a trip to enable corrections</div>';
-    return;
-  }
-  stopsCache.stops.forEach((stop, idx) => {
-    const row = document.createElement('div');
-    row.className = 'stop-row' + (idx === state.trip.current_stop_index ? ' current' : '');
-    row.innerHTML = `<span>${stop.name_ml}</span>`;
-    const btn = document.createElement('button');
-    btn.textContent = 'Jump';
-    btn.addEventListener('click', () => {
-      runProtected(() => postJson('/api/trip/jump', { index: idx }));
-    });
-    row.appendChild(btn);
-    els.stopList.appendChild(row);
-  });
-}
-
-function renderMute(state) {
-  els.muteBtn.textContent = state.muted ? 'Unmute' : 'Mute';
-  els.muteBtn.classList.toggle('red', !!state.muted);
-}
-
 async function ensureStopsLoaded(trip, contentVersion) {
   if (!trip) return;
-  const upToDate = stopsCache.routeId === trip.route_id && stopsCache.contentVersion === contentVersion && stopsCache.stops.length > 0;
+  // Direction is part of the cache key: stops come back already ordered for the trip's
+  // direction, so a "return" trip after a "going" one (same route/content) must refetch.
+  const upToDate = stopsCache.routeId === trip.route_id && stopsCache.direction === trip.direction && stopsCache.contentVersion === contentVersion && stopsCache.stops.length > 0;
   if (upToDate) return;
   const res = await fetch('/api/trip/state');
   const data = await res.json();
-  stopsCache = { routeId: trip.route_id, contentVersion, stops: data.stops || [] };
+  stopsCache = { routeId: trip.route_id, direction: trip.direction, contentVersion, stops: data.stops || [] };
 }
 
 async function applyState(state) {
@@ -292,8 +307,6 @@ async function applyState(state) {
   renderIdentity(state);
   renderStatusPills(state);
   renderTrip(state);
-  renderStopList(state);
-  renderMute(state);
   renderDirectionToggle();
   renderRoutePicker(state);
 }

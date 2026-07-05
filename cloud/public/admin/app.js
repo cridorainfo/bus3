@@ -10,6 +10,10 @@ const state = {
   pendingPairings: [],
   expandedRouteId: null,
   editingRouteId: null,
+  editingBusId: null,
+  editingStopId: null,
+  editingCampaignId: null,
+  campaigns: [],
 };
 
 // --- Top-level tabs ---
@@ -19,6 +23,9 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
+    // Reporting tabs are read-only and not needed on first paint — fetch lazily on first visit
+    // rather than adding to every page load's initial round-trips.
+    if (tab.dataset.tab === 'analytics') loadAnalytics();
   });
 });
 
@@ -78,6 +85,7 @@ async function loadBuses() {
   state.buses = await api('/api/buses');
   renderBuses();
   populatePairBusSelect();
+  populateBusTargetSelects();
   loadPendingPairings();
 }
 
@@ -138,23 +146,79 @@ function renderBuses() {
         ? '<span class="awaiting-pairing-badge">Awaiting pairing</span>'
         : (bus.last_seen_at ? 'last seen ' + bus.last_seen_at : 'never connected');
 
+    const isEditingBus = state.editingBusId === bus.bus_id;
+    const busMainInner = isEditingBus
+      ? `
+        <form class="edit-bus-form">
+          <div class="field"><label>Reg. number</label><input type="text" value="${escapeHtml(bus.reg_number)}" disabled title="Registration number cannot be changed" /></div>
+          <div class="field"><label>Friendly name</label><input type="text" class="edit-bus-name" value="${escapeHtml(bus.friendly_name || '')}" /></div>
+          <div class="field">
+            <label>Tier</label>
+            <select class="edit-bus-tier">
+              <option value="rural" ${bus.tier === 'rural' ? 'selected' : ''}>Rural</option>
+              <option value="urban_standard" ${bus.tier === 'urban_standard' ? 'selected' : ''}>Urban standard</option>
+              <option value="urban_women_premium" ${bus.tier === 'urban_women_premium' ? 'selected' : ''}>Urban women-premium</option>
+            </select>
+          </div>
+          <div class="field"><label>Hardware version</label><input type="text" class="edit-bus-hw" value="${escapeHtml(bus.hardware_version || '')}" /></div>
+          <div class="bus-actions">
+            <button type="submit" class="btn btn-primary btn-small">Save</button>
+            <button type="button" class="btn btn-ghost btn-small cancel-edit-bus">Cancel</button>
+          </div>
+        </form>
+      `
+      : `
+        <div>
+          <div class="bus-reg">${escapeHtml(bus.friendly_name || bus.reg_number)}</div>
+          ${bus.friendly_name ? `<div class="bus-reg-sub">${escapeHtml(bus.reg_number)}</div>` : ''}
+          <div class="bus-meta">${bus.tier} · ${statusText}${bus.route_name ? ' · running ' + escapeHtml(bus.route_name) : ''}</div>
+          ${tripInfo}
+        </div>
+      `;
+
     const card = el(`
       <div class="card bus-card" data-bus-id="${bus.bus_id}">
         <div class="bus-main">
           <span class="status-dot ${statusDotClass}" title="${bus.online ? 'Online' : awaitingPairing ? 'Awaiting pairing' : 'Offline'}"></span>
-          <div>
-            <div class="bus-reg">${escapeHtml(bus.friendly_name || bus.reg_number)}</div>
-            ${bus.friendly_name ? `<div class="bus-reg-sub">${escapeHtml(bus.reg_number)}</div>` : ''}
-            <div class="bus-meta">${bus.tier} · ${statusText}${bus.route_name ? ' · running ' + escapeHtml(bus.route_name) : ''}</div>
-            ${tripInfo}
-          </div>
+          ${busMainInner}
         </div>
         <div class="bus-actions">
+          ${isEditingBus ? '' : '<button class="btn btn-ghost btn-small edit-bus-btn">Edit</button>'}
           ${awaitingPairing ? '' : '<button class="btn btn-ghost btn-small unpair-bus-btn">Disconnect from Server</button>'}
           <button class="btn btn-danger btn-small remove-bus-btn">Remove</button>
         </div>
       </div>
     `);
+
+    if (isEditingBus) {
+      const form = card.querySelector('.edit-bus-form');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api(`/api/buses/${bus.bus_id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              friendly_name: form.querySelector('.edit-bus-name').value,
+              tier: form.querySelector('.edit-bus-tier').value,
+              hardware_version: form.querySelector('.edit-bus-hw').value,
+            }),
+          });
+          state.editingBusId = null;
+          loadBuses();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+      card.querySelector('.cancel-edit-bus').addEventListener('click', () => {
+        state.editingBusId = null;
+        renderBuses();
+      });
+    } else {
+      card.querySelector('.edit-bus-btn').addEventListener('click', () => {
+        state.editingBusId = bus.bus_id;
+        renderBuses();
+      });
+    }
 
     const credsWrap = el(`
       <div class="credentials-wrap">
@@ -178,12 +242,36 @@ function renderBuses() {
       alert('Done — every paired phone on this bus will need the connect code again once the Hub is next online.');
     });
 
-    const routesWrap = el(`<div class="bus-routes-wrap"><div class="label">Assigned routes</div><div class="bus-routes-list"></div></div>`);
+    const routesWrap = el(`
+      <div class="bus-routes-wrap">
+        <div class="label">Assigned routes</div>
+        ${state.routes.length > 1 ? '<input type="text" class="route-search-input" placeholder="Filter by first/last stop or route name…" autocomplete="off" />' : ''}
+        <div class="bus-routes-list"></div>
+      </div>
+    `);
     const routesList = routesWrap.querySelector('.bus-routes-list');
-    if (state.routes.length === 0) {
-      routesList.appendChild(el(`<div class="hint">No routes exist yet — add one in the Routes tab.</div>`));
-    } else {
-      for (const route of state.routes) {
+
+    function matchesRouteFilter(route, filterText) {
+      if (!filterText) return true;
+      const haystack = [
+        route.name, route.name_ml, route.first_stop_name_en, route.first_stop_name_ml,
+        route.last_stop_name_en, route.last_stop_name_ml,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(filterText.toLowerCase());
+    }
+
+    function renderRouteChecklist(filterText) {
+      routesList.innerHTML = '';
+      if (state.routes.length === 0) {
+        routesList.appendChild(el(`<div class="hint">No routes exist yet — add one in the Routes tab.</div>`));
+        return;
+      }
+      const filtered = state.routes.filter((r) => matchesRouteFilter(r, filterText));
+      if (filtered.length === 0) {
+        routesList.appendChild(el(`<div class="hint">No routes match "${escapeHtml(filterText)}".</div>`));
+        return;
+      }
+      for (const route of filtered) {
         const checked = assignedIds.has(route.route_id);
         const row = el(`
           <label class="route-check-row">
@@ -201,6 +289,12 @@ function renderBuses() {
         });
         routesList.appendChild(row);
       }
+    }
+
+    renderRouteChecklist('');
+    const routeSearchInput = routesWrap.querySelector('.route-search-input');
+    if (routeSearchInput) {
+      routeSearchInput.addEventListener('input', () => renderRouteChecklist(routeSearchInput.value));
     }
 
     const unpairBtn = card.querySelector('.unpair-bus-btn');
@@ -432,10 +526,32 @@ async function renderStopEditor(mount, routeId) {
     row.querySelector('.remove-stop').addEventListener('click', async () => {
       await api(`/api/routes/${routeId}/stops/${stop.stop_id}`, { method: 'DELETE' });
       loadRoutes();
+      reloadStopDirectoryPreservingSearch();
     });
 
     editor.appendChild(row);
   });
+
+  if (stops.length >= 2) {
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    const suggestedName = (first.name_en || first.name_ml) + ' - ' + (last.name_en || last.name_ml);
+    const suggestedNameMl = (first.name_ml || first.name_en) + ' - ' + (last.name_ml || last.name_en);
+    const suggestBtn = el(`<button type="button" class="btn btn-ghost btn-small suggest-route-name">Suggest name from stops</button>`);
+    suggestBtn.addEventListener('click', async () => {
+      if (!confirm(`Set route name to "${suggestedName}" (Malayalam: "${suggestedNameMl}")? You can still edit it afterward.`)) return;
+      try {
+        await api(`/api/routes/${routeId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ name: suggestedName, name_ml: suggestedNameMl, tier: routeDetail.tier }),
+        });
+        loadRoutes();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+    editor.appendChild(suggestBtn);
+  }
 
   editor.appendChild(buildStopPicker(routeId, stops.map((s) => s.stop_id)));
   mount.appendChild(editor);
@@ -488,6 +604,7 @@ function buildStopPicker(routeId, alreadyLinkedIds) {
         row.querySelector('.link-stop-btn').addEventListener('click', async () => {
           await api(`/api/routes/${routeId}/stops`, { method: 'POST', body: JSON.stringify({ mode: 'link', stop_id: stop.stop_id }) });
           loadRoutes();
+          reloadStopDirectoryPreservingSearch();
         });
         resultsEl.appendChild(row);
       }
@@ -509,6 +626,7 @@ function buildStopPicker(routeId, alreadyLinkedIds) {
       }),
     });
     loadRoutes();
+    reloadStopDirectoryPreservingSearch();
   });
 
   return wrap;
@@ -529,13 +647,61 @@ document.getElementById('form-add-route').addEventListener('submit', async (e) =
 });
 
 function populateRouteSelects() {
-  const opts = '<option value="">— Global —</option>' + state.routes.map((r) => `<option value="${r.route_id}">${escapeHtml(bothNames(r))}</option>`).join('');
+  const opts = state.routes.map((r) => `<option value="${r.route_id}">${escapeHtml(bothNames(r))}</option>`).join('');
   for (const id of ['banner-route', 'fullscreen-route']) {
     const sel = document.getElementById(id);
     const current = sel.value;
     sel.innerHTML = opts;
     sel.value = current;
   }
+}
+
+// Feeds the campaign picker on the Banner/Full-Screen upload forms.
+function populateCampaignSelects() {
+  const opts = '<option value="">— No campaign (PSA) —</option>' + state.campaigns.filter((c) => c.active).map((c) => `<option value="${c.campaign_id}">${escapeHtml(c.name)}</option>`).join('');
+  for (const id of ['banner-campaign', 'fullscreen-campaign']) {
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = opts;
+    sel.value = current;
+  }
+}
+
+// Feeds the "Specific bus" targeting option on the Banner/Full-Screen upload forms.
+function populateBusTargetSelects() {
+  const opts = state.buses.map((b) => `<option value="${b.bus_id}">${escapeHtml(b.friendly_name || b.reg_number)}</option>`).join('');
+  for (const id of ['banner-target-bus', 'fullscreen-target-bus']) {
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = opts;
+    sel.value = current;
+  }
+}
+
+// Targeting radio group (All buses / By tier / By route / Specific bus) on the ad upload forms —
+// only one secondary select is ever visible/submitted at a time.
+function wireTargetingRadios(formId, namePrefix) {
+  const form = document.getElementById(formId);
+  form.querySelectorAll(`input[name="${namePrefix}-target-scope"]`).forEach((radio) => {
+    radio.addEventListener('change', () => {
+      form.querySelectorAll('[data-targeting-scope]').forEach((field) => {
+        field.style.display = field.dataset.targetingScope === radio.value ? '' : 'none';
+      });
+    });
+  });
+}
+wireTargetingRadios('form-add-banner', 'banner');
+wireTargetingRadios('form-add-fullscreen', 'fullscreen');
+
+// Reads whichever targeting scope is selected and returns exactly the one field to submit —
+// the other two are left absent so the backend's `|| null` fallbacks apply correctly.
+function readTargetingFields(formId, namePrefix) {
+  const form = document.getElementById(formId);
+  const scope = form.querySelector(`input[name="${namePrefix}-target-scope"]:checked`).value;
+  if (scope === 'tier') return { tier: document.getElementById(`${namePrefix}-tier`).value };
+  if (scope === 'route') return { route_id: document.getElementById(`${namePrefix}-route`).value };
+  if (scope === 'bus') return { target_bus_id: document.getElementById(`${namePrefix}-target-bus`).value };
+  return {};
 }
 
 // ===================== CONTENT =====================
@@ -556,6 +722,23 @@ function previewFor(item) {
   return `<audio controls src="${url}"></audio>`;
 }
 
+// Single-select ad targeting: exactly one of route_id/tier/target_bus_id is ever set (or none
+// = all buses) — resolve whichever one it is into a human-readable label for the content list.
+function targetingScopeLabel(item) {
+  const scope = (() => {
+    if (item.route_name) return item.route_name;
+    if (item.tier) return `Tier: ${item.tier}`;
+    if (item.target_bus_id) {
+      const bus = state.buses.find((b) => b.bus_id === item.target_bus_id);
+      return bus ? `Bus: ${bus.friendly_name || bus.reg_number}` : 'Bus: (removed)';
+    }
+    return 'All buses';
+  })();
+  if (!item.campaign_id) return scope;
+  const campaign = state.campaigns.find((c) => c.campaign_id === item.campaign_id);
+  return `${scope} · Campaign: ${campaign ? campaign.name : '(removed)'}`;
+}
+
 function contentCard(item, { scopeLabel }) {
   const card = el(`
     <div class="card content-card" data-content-id="${item.content_id}">
@@ -563,7 +746,7 @@ function contentCard(item, { scopeLabel }) {
         <span class="badge">${item.type.replace('_', ' ')}</span>
         <div>
           <div class="content-title">${escapeHtml(item.original_filename || item.content_id)}</div>
-          <div class="content-meta">${escapeHtml(scopeLabel)}${item.tier ? ' · ' + item.tier : ''}</div>
+          <div class="content-meta">${escapeHtml(scopeLabel)}</div>
         </div>
         ${previewFor(item)}
       </div>
@@ -622,6 +805,13 @@ async function loadStopDirectory(query) {
   renderFilteredStopDirectory();
 }
 
+// Routes-tab mutations (create/link/unlink a stop) change what the Stop Names directory shows
+// (name, "used by" list) — reload it too, keeping whatever the admin already typed in its own
+// search box instead of resetting it.
+function reloadStopDirectoryPreservingSearch() {
+  loadStopDirectory(document.getElementById('stopnames-search').value);
+}
+
 // Filtering happens client-side against the already-fetched search results — the fields these
 // checks need (has_audio_clip, ads_enabled, name_ml) are already in every row, so there's no
 // reason to round-trip to the server just because a filter dropdown changed.
@@ -656,14 +846,30 @@ function renderStopDirectory(stops) {
   }
   for (const stop of stops) {
     const usedBy = stop.used_by_routes.map((r) => r.name).join(', ') || 'not linked to any route yet';
+    const isEditingStop = state.editingStopId === stop.stop_id;
+    const titleBlock = isEditingStop
+      ? `
+        <form class="edit-stop-form">
+          <div class="field"><label>Malayalam name</label><input type="text" class="edit-stop-ml" value="${escapeHtml(stop.name_ml || '')}" required /></div>
+          <div class="field"><label>English name</label><input type="text" class="edit-stop-en" value="${escapeHtml(stop.name_en || '')}" /></div>
+          <div class="bus-actions">
+            <button type="submit" class="btn btn-primary btn-small">Save</button>
+            <button type="button" class="btn btn-ghost btn-small cancel-edit-stop">Cancel</button>
+          </div>
+        </form>
+      `
+      : `
+        <div>
+          <div class="content-title">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</div>
+          <div class="content-meta">Used by: ${escapeHtml(usedBy)}</div>
+        </div>
+      `;
     const row = el(`
       <div class="card stopname-row" data-stop-id="${stop.stop_id}">
         <div class="stopname-head">
-          <div>
-            <div class="content-title">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</div>
-            <div class="content-meta">Used by: ${escapeHtml(usedBy)}</div>
-          </div>
+          ${titleBlock}
           <div class="ads-toggle-wrap">
+            ${isEditingStop ? '' : '<button type="button" class="btn btn-ghost btn-small edit-stop-btn">Edit</button>'}
             <label class="switch" title="${stop.has_ad_clip ? 'Swap in the ad clip for this stop' : 'Upload an ad clip first'}">
               <input type="checkbox" class="ads-toggle" ${stop.ads_enabled ? 'checked' : ''} ${stop.has_ad_clip ? '' : 'disabled'} />
               <span class="slider"></span>
@@ -692,6 +898,35 @@ function renderStopDirectory(stops) {
       await api(`/api/stops/${stop.stop_id}/toggle-ads`, { method: 'POST', body: JSON.stringify({ enabled: e.target.checked }) });
       loadStopDirectory(document.getElementById('stopnames-search').value);
     });
+
+    if (isEditingStop) {
+      const form = row.querySelector('.edit-stop-form');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api(`/api/stops/${stop.stop_id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name_ml: form.querySelector('.edit-stop-ml').value,
+              name_en: form.querySelector('.edit-stop-en').value,
+            }),
+          });
+          state.editingStopId = null;
+          reloadStopDirectoryPreservingSearch();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+      row.querySelector('.cancel-edit-stop').addEventListener('click', () => {
+        state.editingStopId = null;
+        renderFilteredStopDirectory();
+      });
+    } else {
+      row.querySelector('.edit-stop-btn').addEventListener('click', () => {
+        state.editingStopId = stop.stop_id;
+        renderFilteredStopDirectory();
+      });
+    }
 
     const existingForType = (type) => state.content.find((c) => c.stop_id === stop.stop_id && c.type === type);
     row.querySelectorAll('.clip-slot').forEach((slotEl) => {
@@ -735,7 +970,9 @@ function renderBannerList() {
     return;
   }
   for (const item of items) {
-    list.appendChild(contentCard(item, { scopeLabel: item.route_name || 'Global' }));
+    const displayLabel = item.display_mode === 'fullscreen' ? 'Fullscreen' : 'Banner';
+    const durationLabel = item.duration_sec ? `${item.duration_sec}s` : '';
+    list.appendChild(contentCard(item, { scopeLabel: `${targetingScopeLabel(item)} · ${displayLabel}${durationLabel ? ' · ' + durationLabel : ''}` }));
   }
 }
 
@@ -746,12 +983,15 @@ document.getElementById('form-add-banner').addEventListener('submit', async (e) 
   hint.className = 'hint';
   const fd = new FormData();
   fd.append('type', 'ad_banner');
-  fd.append('route_id', document.getElementById('banner-route').value);
-  fd.append('tier', document.getElementById('banner-tier').value);
+  fd.append('display_mode', document.getElementById('banner-display-mode').value);
+  fd.append('duration_sec', document.getElementById('banner-duration').value);
+  fd.append('campaign_id', document.getElementById('banner-campaign').value);
+  for (const [key, value] of Object.entries(readTargetingFields('form-add-banner', 'banner'))) fd.append(key, value);
   fd.append('file', document.getElementById('banner-file').files[0]);
   try {
     await api('/api/content', { method: 'POST', body: fd });
     document.getElementById('form-add-banner').reset();
+    document.getElementById('form-add-banner').querySelectorAll('[data-targeting-scope]').forEach((f) => (f.style.display = 'none'));
     hint.textContent = 'Uploaded — pushed live to matching buses that are online.';
     hint.className = 'hint success';
     loadContent();
@@ -772,7 +1012,7 @@ function renderFullscreenList() {
     return;
   }
   for (const item of items) {
-    list.appendChild(contentCard(item, { scopeLabel: item.route_name || 'Global' }));
+    list.appendChild(contentCard(item, { scopeLabel: targetingScopeLabel(item) }));
   }
 }
 
@@ -783,15 +1023,42 @@ document.getElementById('form-add-fullscreen').addEventListener('submit', async 
   hint.className = 'hint';
   const fd = new FormData();
   fd.append('type', document.getElementById('fullscreen-type').value);
-  fd.append('route_id', document.getElementById('fullscreen-route').value);
-  fd.append('tier', document.getElementById('fullscreen-tier').value);
+  fd.append('duration_sec', document.getElementById('fullscreen-duration').value);
+  fd.append('campaign_id', document.getElementById('fullscreen-campaign').value);
+  for (const [key, value] of Object.entries(readTargetingFields('form-add-fullscreen', 'fullscreen'))) fd.append(key, value);
   fd.append('file', document.getElementById('fullscreen-file').files[0]);
   try {
     await api('/api/content', { method: 'POST', body: fd });
     document.getElementById('form-add-fullscreen').reset();
+    document.getElementById('form-add-fullscreen').querySelectorAll('[data-targeting-scope]').forEach((f) => (f.style.display = 'none'));
     hint.textContent = 'Uploaded — pushed live to matching buses that are online.';
     hint.className = 'hint success';
     loadContent();
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
+
+// ===================== AD TIMING (fleet-wide settings) =====================
+
+async function loadAdTiming() {
+  const settings = await api('/api/settings');
+  document.getElementById('ad-interval-sec').value = settings.ad_interval_sec;
+}
+
+document.getElementById('form-ad-timing').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('ad-timing-hint');
+  try {
+    const saved = await api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ ad_interval_sec: Number(document.getElementById('ad-interval-sec').value) }),
+    });
+    document.getElementById('ad-interval-sec').value = saved.ad_interval_sec;
+    hint.textContent = 'Saved — pushed live to online buses.';
+    hint.className = 'hint success';
+    setTimeout(() => (hint.textContent = ''), 4000);
   } catch (err) {
     hint.textContent = err.message;
     hint.className = 'hint error';
@@ -866,13 +1133,195 @@ document.getElementById('form-add-release').addEventListener('submit', async (e)
   }
 });
 
+// ===================== CAMPAIGNS =====================
+
+function paisaToRupeeStr(paisa) {
+  return paisa == null ? '' : (paisa / 100).toFixed(2);
+}
+function rupeeInputToPaisa(value) {
+  const n = Number(value);
+  return value === '' || !Number.isFinite(n) ? null : Math.round(n * 100);
+}
+
+async function loadCampaigns() {
+  state.campaigns = await api('/api/campaigns');
+  renderCampaigns();
+  populateCampaignSelects();
+}
+
+function renderCampaigns() {
+  const list = document.getElementById('campaign-list');
+  list.innerHTML = '';
+  if (state.campaigns.length === 0) {
+    list.appendChild(el(`<div class="empty-state">No campaigns yet — create one above. Ads with no campaign always play for free.</div>`));
+    return;
+  }
+  for (const campaign of state.campaigns) {
+    const isEditing = state.editingCampaignId === campaign.campaign_id;
+    const unlimited = campaign.budget_paisa == null;
+
+    const body = isEditing
+      ? `
+        <form class="edit-campaign-form">
+          <div class="field"><label>Name</label><input type="text" class="edit-campaign-name" value="${escapeHtml(campaign.name)}" required /></div>
+          <div class="field"><label>Advertiser</label><input type="text" class="edit-campaign-advertiser" value="${escapeHtml(campaign.advertiser_name || '')}" /></div>
+          <div class="field"><label>Rate (paise/play)</label><input type="number" class="edit-campaign-rate" min="1" step="1" value="${campaign.rate_paisa}" required /></div>
+          <div class="field"><label>Budget (₹)</label><input type="number" class="edit-campaign-budget" min="0" step="0.01" value="${paisaToRupeeStr(campaign.budget_paisa)}" ${unlimited ? 'disabled' : ''} /></div>
+          <div class="field"><label><input type="checkbox" class="edit-campaign-unlimited" ${unlimited ? 'checked' : ''} /> Unlimited / free</label></div>
+          <div class="field"><label><input type="checkbox" class="edit-campaign-active" ${campaign.active ? 'checked' : ''} /> Active</label></div>
+          <div class="bus-actions">
+            <button type="submit" class="btn btn-primary btn-small">Save</button>
+            <button type="button" class="btn btn-ghost btn-small cancel-edit-campaign">Cancel</button>
+          </div>
+        </form>
+      `
+      : `
+        <div>
+          <div class="route-title">${escapeHtml(campaign.name)}${campaign.active ? '' : ' <span class="badge">inactive</span>'}</div>
+          <div class="route-meta">
+            ${campaign.advertiser_name ? escapeHtml(campaign.advertiser_name) + ' · ' : ''}${campaign.rate_paisa}p/play ·
+            ${unlimited ? 'Unlimited/free' : `₹${paisaToRupeeStr(campaign.budget_paisa)} budget · ₹${paisaToRupeeStr(campaign.spent_paisa)} spent · ₹${paisaToRupeeStr(campaign.remaining_paisa)} remaining`}
+          </div>
+        </div>
+      `;
+
+    const card = el(`
+      <div class="card" data-campaign-id="${campaign.campaign_id}">
+        <div class="route-card-head">
+          ${body}
+          ${isEditing ? '' : '<div class="bus-actions"><button class="btn btn-ghost btn-small edit-campaign">Edit</button></div>'}
+        </div>
+      </div>
+    `);
+
+    if (isEditing) {
+      const form = card.querySelector('.edit-campaign-form');
+      const unlimitedCheckbox = form.querySelector('.edit-campaign-unlimited');
+      const budgetInput = form.querySelector('.edit-campaign-budget');
+      unlimitedCheckbox.addEventListener('change', () => { budgetInput.disabled = unlimitedCheckbox.checked; });
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api(`/api/campaigns/${campaign.campaign_id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name: form.querySelector('.edit-campaign-name').value,
+              advertiser_name: form.querySelector('.edit-campaign-advertiser').value,
+              rate_paisa: form.querySelector('.edit-campaign-rate').value,
+              budget_paisa: unlimitedCheckbox.checked ? null : rupeeInputToPaisa(budgetInput.value),
+              active: form.querySelector('.edit-campaign-active').checked,
+            }),
+          });
+          state.editingCampaignId = null;
+          loadCampaigns();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+      card.querySelector('.cancel-edit-campaign').addEventListener('click', () => {
+        state.editingCampaignId = null;
+        renderCampaigns();
+      });
+    } else {
+      card.querySelector('.edit-campaign').addEventListener('click', () => {
+        state.editingCampaignId = campaign.campaign_id;
+        renderCampaigns();
+      });
+    }
+
+    list.appendChild(card);
+  }
+}
+
+document.getElementById('campaign-unlimited').addEventListener('change', (e) => {
+  document.getElementById('campaign-budget').disabled = e.target.checked;
+});
+
+document.getElementById('form-add-campaign').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('campaign-upload-hint');
+  const unlimited = document.getElementById('campaign-unlimited').checked;
+  try {
+    await api('/api/campaigns', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: document.getElementById('campaign-name').value,
+        advertiser_name: document.getElementById('campaign-advertiser').value,
+        rate_paisa: document.getElementById('campaign-rate').value,
+        budget_paisa: unlimited ? null : rupeeInputToPaisa(document.getElementById('campaign-budget').value),
+      }),
+    });
+    document.getElementById('form-add-campaign').reset();
+    document.getElementById('campaign-budget').disabled = false;
+    hint.textContent = '';
+    loadCampaigns();
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
+
+// ===================== ANALYTICS =====================
+
+const TYPE_LABELS = {
+  ad_banner: 'Banner/fullscreen image ads',
+  ad_video: 'Full-screen video ads',
+  music: 'Music',
+  stop_name: 'Stop name announcements',
+  stop_name_ad: 'Stop name (sponsored) announcements',
+  chime: 'Chimes', filler: 'Fillers', outro: 'Outros',
+};
+
+async function loadAnalytics() {
+  const data = await api('/api/analytics/play-counts');
+  renderAnalyticsSummary(data.by_type);
+  renderAnalyticsByContent(data.by_content);
+}
+
+function renderAnalyticsSummary(byType) {
+  const wrap = document.getElementById('analytics-summary');
+  wrap.innerHTML = '';
+  if (byType.length === 0) {
+    wrap.appendChild(el(`<div class="empty-state">No plays reported yet.</div>`));
+    return;
+  }
+  const card = el(`<div class="card"><div class="route-title">By type</div></div>`);
+  for (const row of byType) {
+    card.appendChild(el(`
+      <div class="stop-row">
+        <div class="stop-names">${escapeHtml(TYPE_LABELS[row.type] || row.type)}</div>
+        <div>${row.play_count} plays${row.billable_count ? ` · ${row.billable_count} billable` : ''}</div>
+      </div>
+    `));
+  }
+  wrap.appendChild(card);
+}
+
+function renderAnalyticsByContent(byContent) {
+  const wrap = document.getElementById('analytics-by-content');
+  wrap.innerHTML = '';
+  if (byContent.length === 0) return;
+  const card = el(`<div class="card"><div class="route-title">By content item</div></div>`);
+  for (const row of byContent) {
+    card.appendChild(el(`
+      <div class="stop-row">
+        <div class="stop-names">${escapeHtml(row.original_filename || row.content_id)} <span class="badge">${escapeHtml(row.type.replace('_', ' '))}</span></div>
+        <div>${row.play_count} plays${row.billable_count ? ` · ${row.billable_count} billable` : ''}</div>
+      </div>
+    `));
+  }
+  wrap.appendChild(card);
+}
+
 // ===================== Boot =====================
 
 async function refreshAll() {
   await loadRoutes();
   await loadBuses();
+  await loadCampaigns();
   await loadContent();
   await loadReleases();
+  await loadAdTiming();
   loadStopDirectory(''); // browse-all by default — a stop created via Routes shows up immediately
 }
 

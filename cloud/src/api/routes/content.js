@@ -16,9 +16,11 @@ const ALLOWED_TYPES = ['chime', 'filler', 'stop_name', 'stop_name_ad', 'outro', 
 
 // Stop-specific content (stop_name/stop_name_ad) needs to reach every bus on every route that
 // includes that stop — not just the one route it happened to be uploaded against, since stops
-// are now shared across routes.
-function pushForContent({ route_id, stop_id }) {
-  if (stop_id) {
+// are now shared across routes. A bus-targeted ad only ever needs to reach that one bus.
+function pushForContent({ route_id, stop_id, target_bus_id }) {
+  if (target_bus_id) {
+    pushSyncStateToBuses([target_bus_id]);
+  } else if (stop_id) {
     pushSyncStateToBuses(busIdsAffectedByStop(stop_id));
   } else {
     pushSyncStateToBuses(busIdsAffectedByRoute(route_id || null));
@@ -54,7 +56,7 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', upload.single('file'), (req, res) => {
-  const { type, route_id, stop_id, tier, duration_sec, advertiser_id, campaign_id } = req.body || {};
+  const { type, route_id, stop_id, tier, duration_sec, advertiser_id, campaign_id, target_bus_id, display_mode } = req.body || {};
   if (!req.file) return res.status(400).json({ error: 'file_required' });
   if (!ALLOWED_TYPES.includes(type)) {
     fs.unlink(req.file.path, () => {});
@@ -64,8 +66,8 @@ router.post('/', upload.single('file'), (req, res) => {
   const contentId = req.file.filename.replace(path.extname(req.file.filename), '');
   db.prepare(`
     INSERT INTO content_items
-      (content_id, type, file_path, original_filename, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (content_id, type, file_path, original_filename, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id, target_bus_id, display_mode)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     contentId,
     type,
@@ -76,10 +78,12 @@ router.post('/', upload.single('file'), (req, res) => {
     advertiser_id || null,
     campaign_id || null,
     route_id || null,
-    stop_id || null
+    stop_id || null,
+    target_bus_id || null,
+    display_mode === 'fullscreen' ? 'fullscreen' : 'banner'
   );
 
-  pushForContent({ route_id: route_id || null, stop_id: stop_id || null });
+  pushForContent({ route_id: route_id || null, stop_id: stop_id || null, target_bus_id: target_bus_id || null });
   res.status(201).json(db.prepare('SELECT * FROM content_items WHERE content_id = ?').get(contentId));
 });
 
@@ -91,7 +95,7 @@ router.delete('/:contentId', (req, res) => {
   const filePath = path.join(ASSETS_DIR, item.file_path);
   fs.unlink(filePath, () => {}); // best-effort; missing file shouldn't block the DB delete
 
-  pushForContent({ route_id: item.route_id, stop_id: item.stop_id });
+  pushForContent({ route_id: item.route_id, stop_id: item.stop_id, target_bus_id: item.target_bus_id });
   res.json({ ok: true });
 });
 

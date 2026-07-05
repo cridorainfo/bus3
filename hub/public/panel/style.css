@@ -158,6 +158,25 @@ body {
 .big-btn.red { background: #a13a3a; }
 .big-btn:active { transform: scale(0.98); }
 
+.secondary-actions { display: flex; gap: 12px; margin-bottom: 16px; }
+.secondary-btn {
+  flex: 1;
+  padding: 18px 10px;
+  font-size: 16px;
+  font-weight: 600;
+  border: 1px solid #33334a;
+  border-radius: 14px;
+  color: #f0f0f5;
+  background: #1b1b2a;
+}
+.secondary-btn:active { transform: scale(0.98); background: #23233a; }
+
+.danger-zone {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid #33334a;
+}
+
 .hint {
   text-align: center;
   color: #9a9ab0;

@@ -33,6 +33,17 @@ const TRANSPORT_MODE = (process.env.HUB_TRANSPORT || 'mock').toLowerCase();
 const app = express();
 app.use(express.json());
 
+// Served dynamically (must come before the /panel static mount below, which would otherwise
+// win for this exact path) — this file's own bytes need to change on every Hub release so a
+// driver's already-installed PWA actually notices there's an update, instead of being stuck
+// forever on whatever it cached the first time. See the file itself for why.
+const PANEL_SW_TEMPLATE = require('fs').readFileSync(path.join(__dirname, '..', 'public', 'panel', 'sw.js'), 'utf8');
+const HUB_VERSION = require('../package.json').version;
+app.get('/panel/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache'); // browsers already re-check a SW script every load; don't let HTTP caching mask that
+  res.type('application/javascript').send(PANEL_SW_TEMPLATE.replaceAll('__CACHE_VERSION__', HUB_VERSION));
+});
+
 // Static frontends — plain HTML/CSS/JS per spec's "deliberately light" recommendation.
 app.use('/display', express.static(path.join(__dirname, '..', 'public', 'display')));
 app.use('/panel', express.static(path.join(__dirname, '..', 'public', 'panel')));
@@ -78,7 +89,11 @@ transport.on('signal', ({ signal }) => {
 });
 
 tripEngine.startIdleAutoCloseChecker();
-setInterval(() => playbackEngine.idleAdTick(), 60 * 1000);
+// Checked every second, fires per the admin-controlled ad_interval_sec setting (default 60s) or
+// per an individual image ad's own admin-set duration_sec (as low as a few seconds) — see
+// playbackEngine.idleAdTickIfDue. A coarser poll (e.g. 5s) would quantize a short per-ad
+// duration up to the next multiple of the poll interval, visibly overshooting what the admin set.
+setInterval(() => playbackEngine.idleAdTickIfDue(), 1000);
 
 // --- API routes ---
 app.use('/api/pair', pairingRoutes);

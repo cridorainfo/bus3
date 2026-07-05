@@ -1,8 +1,10 @@
 @echo off
-REM Shared helper — launches Edge/Chrome in "app mode" (--app=<url>) pointed at %1: no tabs, no
-REM address bar, no bookmarks bar, no menu, filling the screen exactly at 1920x1080 — not
-REM recognizable as "a browser" at all. Used by both start-kiosk.bat (auto-boot) and run-hub.bat
-REM (manual run), so there's exactly one place that knows how to find/launch the browser.
+REM Shared helper — launches Edge/Chrome in true kiosk mode (--kiosk) pointed at %1: no tabs, no
+REM address bar, no bookmarks bar, no menu, AND the Windows taskbar hidden — --kiosk is
+REM Chromium's purpose-built flag for exactly this (unlike --app + --start-fullscreen, which
+REM does hide browser chrome but does NOT reliably hide the taskbar). Used by both
+REM start-kiosk.bat (auto-boot) and run-hub.bat (manual run), so there's exactly one place that
+REM knows how to find/launch the browser.
 REM
 REM Usage: call _launch-kiosk-browser.bat "http://localhost:3000/display/"
 
@@ -12,7 +14,11 @@ if "%KIOSK_URL%"=="" (
     exit /b 1
 )
 
-set KIOSK_FLAGS=--app=%KIOSK_URL% --start-fullscreen --window-size=1920,1080 --window-position=0,0 --autoplay-policy=no-user-gesture-required --disable-session-crashed-bubble --disable-pinch --overscroll-history-navigation=0 --noerrdialogs --no-first-run
+REM Common to both browsers: autoplays announcement/ad audio without needing a user gesture
+REM (there's no one to click anything on an unattended kiosk), and suppresses the "didn't shut
+REM down correctly" restore-session bubble that can otherwise pop up over the passenger display
+REM after a power loss mid-route.
+set COMMON_FLAGS=--autoplay-policy=no-user-gesture-required --disable-session-crashed-bubble --disable-pinch --overscroll-history-navigation=0 --noerrdialogs --no-first-run
 
 REM Neither Edge nor Chrome is normally added to PATH by their installers, so `where` alone
 REM would falsely report "not found" even when installed — check their actual install
@@ -26,12 +32,14 @@ if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set CHROME_EXE=%P
 if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set CHROME_EXE=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe
 
 if not "%EDGE_EXE%"=="" (
-    start "" "%EDGE_EXE%" %KIOSK_FLAGS%
+    REM --edge-kiosk-type=fullscreen is Edge-specific — without it, Edge's --kiosk defaults to a
+    REM more limited "kiosk browsing" mode that can still leave some taskbar/UI visible.
+    start "" "%EDGE_EXE%" --kiosk "%KIOSK_URL%" --edge-kiosk-type=fullscreen %COMMON_FLAGS%
     exit /b 0
 )
 
 if not "%CHROME_EXE%"=="" (
-    start "" "%CHROME_EXE%" %KIOSK_FLAGS%
+    start "" "%CHROME_EXE%" --kiosk "%KIOSK_URL%" %COMMON_FLAGS%
     exit /b 0
 )
 
