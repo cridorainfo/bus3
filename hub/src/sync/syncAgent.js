@@ -240,20 +240,12 @@ async function applySyncState(payload) {
     })();
   }
 
-  // Remove routes no longer assigned to this bus (e.g. seeded demo R1 after cloud pairing) so
-  // the panel picker and display timeline can't show stale stop lists.
-  const deleteOrphanRouteStops = db.prepare('DELETE FROM route_stops WHERE route_id = ?');
-  const deleteOrphanRoute = db.prepare('DELETE FROM routes WHERE route_id = ?');
-  const localAllRouteIds = db.prepare('SELECT route_id FROM routes').all().map((r) => r.route_id);
-  db.transaction(() => {
-    for (const routeId of localAllRouteIds) {
-      if (incomingRouteIds.has(routeId)) continue;
-      deleteOrphanRouteStops.run(routeId);
-      deleteOrphanRoute.run(routeId);
-    }
-  })();
+  // play_logs helpers — defined early so route/content cleanup can null references before deletes.
+  ensurePlayLogsWithoutContentFk();
+  const nullPlayLogContentRef = db.prepare('UPDATE play_logs SET content_id = NULL WHERE content_id = ?');
+  const deleteContentItem = db.prepare('DELETE FROM content_items WHERE content_id = ?');
 
-  // Reconcile the local assigned_routes mirror to exactly match the incoming assignment set.
+  // Reconcile assigned_routes BEFORE deleting orphan routes — assigned_routes.route_id FK blocks route DELETE.
   const localAssignedIds = db.prepare('SELECT route_id FROM assigned_routes').all().map((r) => r.route_id);
   const insertAssigned = db.prepare('INSERT OR IGNORE INTO assigned_routes (route_id) VALUES (?)');
   const deleteAssigned = db.prepare('DELETE FROM assigned_routes WHERE route_id = ?');
@@ -263,6 +255,37 @@ async function applySyncState(payload) {
       if (!incomingRouteIds.has(routeId)) deleteAssigned.run(routeId);
     }
   })();
+
+  // Remove routes no longer assigned to this bus (e.g. seeded demo R1 after cloud pairing).
+  const deleteOrphanRouteStops = db.prepare('DELETE FROM route_stops WHERE route_id = ?');
+  const clearStopVestigialRoute = db.prepare('UPDATE stops SET route_id = NULL WHERE route_id = ?');
+  const deleteOrphanPlaylists = db.prepare('DELETE FROM playlists WHERE route_id = ?');
+  const deleteOrphanRoute = db.prepare('DELETE FROM routes WHERE route_id = ?');
+  const localAllRouteIds = db.prepare('SELECT route_id FROM routes').all().map((r) => r.route_id);
+  for (const routeId of localAllRouteIds) {
+    if (incomingRouteIds.has(routeId)) continue;
+    try {
+      db.transaction(() => {
+        const orphanContent = db.prepare('SELECT content_id, file_path FROM content_items WHERE route_id = ?').all(routeId);
+        for (const row of orphanContent) {
+          nullPlayLogContentRef.run(row.content_id);
+          deleteContentItem.run(row.content_id);
+          unlinkContentFile(row.file_path);
+        }
+        deleteOrphanRouteStops.run(routeId);
+        clearStopVestigialRoute.run(routeId);
+        deleteOrphanPlaylists.run(routeId);
+        deleteAssigned.run(routeId);
+        deleteOrphanRoute.run(routeId);
+      })();
+    } catch (err) {
+      if (String(err.message).includes('FOREIGN KEY')) {
+        console.warn(`[syncAgent] kept orphan route ${routeId} locally (${err.message})`);
+      } else {
+        throw err;
+      }
+    }
+  }
 
   const busId = getBusId();
 
@@ -312,9 +335,6 @@ async function applySyncState(payload) {
   const incomingContentIds = new Set((contentItems || []).map((c) => c.content_id));
   const incomingGlobalTypes = new Set((contentItems || []).filter((c) => !c.route_id && !c.stop_id).map((c) => c.type));
   const localContentRows = db.prepare('SELECT content_id, file_path, type, route_id, stop_id, target_bus_id, tier FROM content_items').all();
-  const nullPlayLogContentRef = db.prepare('UPDATE play_logs SET content_id = NULL WHERE content_id = ?');
-  const deleteContentItem = db.prepare('DELETE FROM content_items WHERE content_id = ?');
-  ensurePlayLogsWithoutContentFk();
 
   // Download first — never drop local clips until replacements are actually on disk, otherwise
   // a failed fetch leaves announcements/ads with nothing to play.
