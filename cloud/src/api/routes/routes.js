@@ -131,8 +131,8 @@ router.post('/:routeId/stops', (req, res) => {
     const newStopId = uniqueId(db, 'stops', 'stop_id', `ST-${name_en || name_ml}`);
     db.prepare(`
       INSERT INTO stops (stop_id, route_id, name_ml, name_en, sequence_no, ads_enabled, announcement_template)
-      VALUES (?, ?, ?, ?, ?, 0, 'chime,filler,stop_name,outro')
-    `).run(newStopId, routeId, name_ml.trim(), (name_en || '').trim(), nextSeq);
+      VALUES (?, NULL, ?, ?, NULL, 0, 'chime,filler,stop_name,outro')
+    `).run(newStopId, name_ml.trim(), (name_en || '').trim());
     db.prepare('INSERT INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)').run(routeId, newStopId, nextSeq);
   }
 
@@ -145,6 +145,9 @@ router.post('/:routeId/stops', (req, res) => {
 router.delete('/:routeId/stops/:stopId', (req, res) => {
   const { routeId, stopId } = req.params;
   db.prepare('DELETE FROM route_stops WHERE route_id = ? AND stop_id = ?').run(routeId, stopId);
+  // route_stops is the source of truth; clear vestigial stops.route_id so a server restart
+  // doesn't re-link this stop via the legacy migration in db.js.
+  db.prepare('UPDATE stops SET route_id = NULL, sequence_no = NULL WHERE stop_id = ?').run(stopId);
 
   // Resequence remaining links so sequence_no stays contiguous (0..n-1).
   const remaining = db.prepare('SELECT stop_id FROM route_stops WHERE route_id = ? ORDER BY sequence_no ASC').all(routeId);

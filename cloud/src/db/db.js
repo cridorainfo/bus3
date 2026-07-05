@@ -37,17 +37,32 @@ ensureColumn('pending_pairings', 'last_seen_at', 'last_seen_at TEXT');
 ensureColumn('content_items', 'target_bus_id', 'target_bus_id TEXT REFERENCES buses(bus_id)');
 ensureColumn('content_items', 'display_mode', "display_mode TEXT DEFAULT 'banner'");
 
+// Stops.route_id is vestigial — if it points at a route the stop is no longer linked to,
+// clear it so the legacy backfill below can't resurrect removed route members on restart.
+db.prepare(`
+  UPDATE stops SET route_id = NULL, sequence_no = NULL
+  WHERE route_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM route_stops rs WHERE rs.stop_id = stops.stop_id AND rs.route_id = stops.route_id
+    )
+`).run();
+
 // One-time backfill: stops used to belong to exactly one route — carry forward any pre-existing
-// route_id/sequence_no into route_stops (idempotent, INSERT OR IGNORE).
-const legacyStops = db
-  .prepare('SELECT stop_id, route_id, sequence_no FROM stops WHERE route_id IS NOT NULL')
-  .all();
-const insertRouteStop = db.prepare(`
-  INSERT OR IGNORE INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)
-`);
-db.transaction(() => {
-  for (const s of legacyStops) insertRouteStop.run(s.route_id, s.stop_id, s.sequence_no ?? 0);
-})();
+// route_id/sequence_no into route_stops. Guarded so it never runs again after the first boot —
+// otherwise unlinking a stop (route_stops delete) leaves stops.route_id set and every deploy
+// restart re-inserts the stop into the route.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'legacy_route_stops_migrated'").get()) {
+  const legacyStops = db
+    .prepare('SELECT stop_id, route_id, sequence_no FROM stops WHERE route_id IS NOT NULL')
+    .all();
+  const insertRouteStop = db.prepare(`
+    INSERT OR IGNORE INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)
+  `);
+  db.transaction(() => {
+    for (const s of legacyStops) insertRouteStop.run(s.route_id, s.stop_id, s.sequence_no ?? 0);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('legacy_route_stops_migrated', '1')").run();
+  })();
+}
 
 // One-time rewrite: templates now always include the shared `filler` segment; the old additive
 // `sponsor_snippet` token is superseded by the ads_enabled swap mechanism.

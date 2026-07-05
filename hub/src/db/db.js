@@ -35,18 +35,28 @@ ensureColumn('device_config', 'tier', "tier TEXT DEFAULT 'rural'");
 ensureColumn('content_items', 'target_bus_id', 'target_bus_id TEXT');
 ensureColumn('content_items', 'display_mode', "display_mode TEXT DEFAULT 'banner'");
 
+db.prepare(`
+  UPDATE stops SET route_id = NULL, sequence_no = NULL
+  WHERE route_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM route_stops rs WHERE rs.stop_id = stops.stop_id AND rs.route_id = stops.route_id
+    )
+`).run();
+
 // One-time backfill: stops used to belong to exactly one route (stops.route_id/sequence_no).
-// Now that ordering lives in route_stops, carry forward any stop that predates this change and
-// isn't in route_stops yet (idempotent — only inserts rows that don't already exist).
-const legacyStops = db
-  .prepare('SELECT stop_id, route_id, sequence_no FROM stops WHERE route_id IS NOT NULL')
-  .all();
-const insertRouteStop = db.prepare(`
-  INSERT OR IGNORE INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)
-`);
-db.transaction(() => {
-  for (const s of legacyStops) insertRouteStop.run(s.route_id, s.stop_id, s.sequence_no ?? 0);
-})();
+// Guarded so unlinking a stop on the cloud side isn't undone on every Hub restart.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'legacy_route_stops_migrated'").get()) {
+  const legacyStops = db
+    .prepare('SELECT stop_id, route_id, sequence_no FROM stops WHERE route_id IS NOT NULL')
+    .all();
+  const insertRouteStop = db.prepare(`
+    INSERT OR IGNORE INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)
+  `);
+  db.transaction(() => {
+    for (const s of legacyStops) insertRouteStop.run(s.route_id, s.stop_id, s.sequence_no ?? 0);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('legacy_route_stops_migrated', '1')").run();
+  })();
+}
 
 // One-time rewrite: the announcement template now always includes the shared `filler` segment,
 // and the old additive `sponsor_snippet` token is superseded by the ads_enabled swap mechanism.
