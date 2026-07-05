@@ -16,6 +16,7 @@ let selectedDirection = localStorage.getItem('adkerala_direction') === 'return' 
 
 const els = {
   busName: document.getElementById('bus-name'),
+  busFriendlyName: document.getElementById('bus-friendly-name'),
   regNumberSub: document.getElementById('reg-number-sub'),
   routeName: document.getElementById('route-name'),
   routePicker: document.getElementById('route-picker'),
@@ -254,15 +255,18 @@ document.getElementById('btn-submit-issue').addEventListener('click', async () =
 
 // --- Rendering ---
 function renderIdentity(state) {
-  const hasFriendlyName = !!state.bus.friendly_name;
-  els.busName.textContent = hasFriendlyName ? state.bus.friendly_name : (state.bus.reg_number || '—');
-  els.regNumberSub.textContent = hasFriendlyName ? state.bus.reg_number || '' : '';
+  const friendly = state.bus.friendly_name || '';
+  const reg = state.bus.reg_number || '—';
+  els.busFriendlyName.textContent = friendly;
+  els.busFriendlyName.style.display = friendly ? 'block' : 'none';
+  els.busName.textContent = reg;
+  els.regNumberSub.textContent = '';
   els.routeName.textContent = state.bus.route_assigned ? (state.bus.route_name || `Route ${state.bus.route_assigned}`) : 'No route assigned';
 }
 
 function renderStatusPills(state) {
   const esp32Ok = state.esp32 && state.esp32.connected;
-  els.esp32Pill.textContent = `ESP32 ${esp32Ok ? '✓' : '✗'}`;
+  els.esp32Pill.textContent = `Console ${esp32Ok ? '✓' : '✗'}`;
   els.esp32Pill.className = `status-pill ${esp32Ok ? 'ok' : 'bad'}`;
 
   els.netPill.textContent = 'Internet —'; // stubbed until Phase 2 sync engine exists

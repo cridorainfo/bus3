@@ -53,7 +53,7 @@ function seedDemoRoute() {
   // linked into a second route via the Admin's stop search instead of being duplicated.
   const insertStop = db.prepare(`
     INSERT INTO stops (stop_id, route_id, name_ml, name_en, sequence_no, ads_enabled, announcement_template)
-    VALUES (?, 'R1', ?, ?, ?, ?, 'chime,filler,stop_name,outro')
+    VALUES (?, 'R1', ?, ?, ?, ?, 'chime,filler,stop_name')
   `);
   const insertRouteStop = db.prepare('INSERT INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)');
   for (const [id, ml, en, seq] of stops) {

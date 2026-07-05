@@ -160,14 +160,14 @@
 
       <!-- --- Announcement Audio: chime / filler / outro, global, shared by every stop --- -->
       <section id="subtab-announcement" class="subtab-panel active">
-        <p class="subtitle">Common to every stop's announcement: <code>chime → filler → stop name → outro</code>. Uploading replaces the current clip for that slot.</p>
+        <p class="subtitle">Every stop: <code>attention please → next stop is → stop name</code>. The last stop of a trip also plays <code>thanks for the journey</code>. Uploading replaces the current clip for that slot.</p>
         <form id="form-add-announcement" class="card form-inline" enctype="multipart/form-data">
           <div class="field">
             <label>Slot</label>
             <select id="announcement-type">
-              <option value="chime">Chime</option>
-              <option value="filler">Filler phrase (e.g. "attention please, next stop is")</option>
-              <option value="outro">Outro</option>
+              <option value="chime">Attention please</option>
+              <option value="filler">Next stop is</option>
+              <option value="outro">Thanks for the journey (last stop only)</option>
             </select>
           </div>
           <div class="field"><label>File</label><input type="file" id="announcement-file" required /></div>

@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS stops (
     name_en               TEXT,
     sequence_no           INTEGER,
     ads_enabled           INTEGER NOT NULL DEFAULT 0,
-    announcement_template TEXT NOT NULL DEFAULT 'chime,filler,stop_name,outro'
+    announcement_template TEXT NOT NULL DEFAULT 'chime,filler,stop_name'
 );
 
 CREATE TABLE IF NOT EXISTS route_stops (

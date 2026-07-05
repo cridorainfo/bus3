@@ -10,11 +10,11 @@ server and admin dashboard. No ad budget pacing / owner dashboard yet — those 
 segmented toggle). Both directions walk the same stop list — "Coming Back" just walks it in
 reverse — so there's only ever one stop list per route to manage, in the admin or locally.
 
-**Announcement composition**: every stop plays `chime → filler → stop_name → outro` — `chime`/
-`filler`/`outro` are shared, global clips; `filler` is the common phrase spoken at every stop
-(e.g. "next stop is..."). When a stop's Ads toggle is on **and** a `stop_name_ad` clip has been
-uploaded for it, that combined "stop name + sponsor" clip swaps in for the plain `stop_name` —
-see `composeAnnouncement` in `src/engine/playbackEngine.js`.
+**Announcement composition**: every stop plays `chime → filler → stop_name` — `chime` is
+"attention please", `filler` is "next stop is", and `stop_name` is the stop audio. The trip's
+last stop also plays `outro` ("thanks for the journey"). When a stop's Ads toggle is on **and**
+a `stop_name_ad` clip has been uploaded for it, that sponsored clip swaps in for the plain
+`stop_name` — see `composeAnnouncement` in `src/engine/playbackEngine.js`.
 
 **Stops are global**, not owned by one route — `route_stops` links a stop into a route's order,
 so the same physical stop (and its recorded audio) can be shared across routes without

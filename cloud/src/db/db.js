@@ -64,12 +64,14 @@ if (!db.prepare("SELECT 1 FROM settings WHERE key = 'legacy_route_stops_migrated
   })();
 }
 
-// One-time rewrite: templates now always include the shared `filler` segment; the old additive
-// `sponsor_snippet` token is superseded by the ads_enabled swap mechanism.
-db.prepare(`
-  UPDATE stops SET announcement_template = 'chime,filler,stop_name,outro'
-  WHERE announcement_template NOT LIKE '%filler%'
-`).run();
+// One-time rewrite: outro plays only on the trip's last stop; normal stops are chime → filler → stop_name.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'announcement_outro_last_stop_only'").get()) {
+  db.prepare(`
+    UPDATE stops SET announcement_template = 'chime,filler,stop_name'
+    WHERE announcement_template LIKE '%outro%'
+  `).run();
+  db.prepare("INSERT INTO settings (key, value) VALUES ('announcement_outro_last_stop_only', '1')").run();
+}
 
 // One-time backfill: a bus used to have exactly one assigned route (buses.route_id) — carry it
 // forward into bus_routes so existing assignments aren't lost now that a bus can run several.

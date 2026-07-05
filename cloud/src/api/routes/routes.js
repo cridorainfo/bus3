@@ -131,7 +131,7 @@ router.post('/:routeId/stops', (req, res) => {
     const newStopId = uniqueId(db, 'stops', 'stop_id', `ST-${name_en || name_ml}`);
     db.prepare(`
       INSERT INTO stops (stop_id, route_id, name_ml, name_en, sequence_no, ads_enabled, announcement_template)
-      VALUES (?, NULL, ?, ?, NULL, 0, 'chime,filler,stop_name,outro')
+      VALUES (?, NULL, ?, ?, NULL, 0, 'chime,filler,stop_name')
     `).run(newStopId, name_ml.trim(), (name_en || '').trim());
     db.prepare('INSERT INTO route_stops (route_id, stop_id, sequence_no) VALUES (?, ?, ?)').run(routeId, newStopId, nextSeq);
   }

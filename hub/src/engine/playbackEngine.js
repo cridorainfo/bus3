@@ -20,32 +20,34 @@ function getStop(routeId, direction, index) {
   return stops[index];
 }
 
-// Assembles the segment list for a stop's announcement template (default: chime, filler,
-// stop_name, outro). The template is data (stops.announcement_template), so admins can change
-// the pattern with no code change. `chime`/`filler`/`outro` are global (common to every
-// announcement); `stop_name` is per-stop, and gets *swapped* — not layered — for a
-// `stop_name_ad` clip when the admin has both uploaded one and flipped the stop's ads toggle on.
-function composeAnnouncement(stop) {
+function fetchGlobalClip(type) {
+  return db.prepare(`
+    SELECT * FROM content_items
+    WHERE type = ? AND route_id IS NULL AND stop_id IS NULL
+      AND (
+        content_id NOT LIKE '%-default'
+        OR NOT EXISTS (
+          SELECT 1 FROM content_items c2
+          WHERE c2.type = ? AND c2.route_id IS NULL AND c2.stop_id IS NULL
+            AND c2.content_id NOT LIKE '%-default'
+        )
+      )
+    ORDER BY CASE WHEN content_id LIKE '%-default' THEN 1 ELSE 0 END, content_id DESC
+    LIMIT 1
+  `).get(type, type);
+}
+
+// Fixed announcement shape:
+//   Normal stop: attention please (chime) → next stop is (filler) → stop name (or stop_name_ad)
+//   Last stop:   same three parts → thanks for the journey (outro)
+function composeAnnouncement(stop, { isLastStop = false } = {}) {
   const types = stop.announcement_template.split(',').map((s) => s.trim());
   const segments = [];
   for (const type of types) {
+    if (type === 'outro' && !isLastStop) continue;
     let item = null;
     if (type === 'chime' || type === 'filler' || type === 'outro') {
-      // Never play seeded placeholders when a cloud-synced clip exists for this slot.
-      item = db.prepare(`
-        SELECT * FROM content_items
-        WHERE type = ? AND route_id IS NULL AND stop_id IS NULL
-          AND (
-            content_id NOT LIKE '%-default'
-            OR NOT EXISTS (
-              SELECT 1 FROM content_items c2
-              WHERE c2.type = ? AND c2.route_id IS NULL AND c2.stop_id IS NULL
-                AND c2.content_id NOT LIKE '%-default'
-            )
-          )
-        ORDER BY CASE WHEN content_id LIKE '%-default' THEN 1 ELSE 0 END, content_id DESC
-        LIMIT 1
-      `).get(type, type);
+      item = fetchGlobalClip(type);
     } else if (type === 'stop_name') {
       if (stop.ads_enabled) {
         item = db.prepare('SELECT * FROM content_items WHERE type = ? AND stop_id = ? LIMIT 1').get('stop_name_ad', stop.stop_id);
@@ -55,6 +57,10 @@ function composeAnnouncement(stop) {
       }
     }
     if (item) segments.push(item);
+  }
+  if (isLastStop && !segments.some((s) => s.type === 'outro')) {
+    const outro = fetchGlobalClip('outro');
+    if (outro) segments.push(outro);
   }
   return segments;
 }
@@ -110,6 +116,7 @@ function handleForward() {
   // Announce the stop currently shown as "next" (prevIndex), then advance the pointer — not the
   // stop after it, which made every Forward sound like two stops (old next + new next).
   const stopToAnnounce = stops[prevIndex];
+  const isLastStop = prevIndex === stops.length - 1;
 
   const anchor = state.segmentAnchorAt || now;
   const segmentDurationSec = (now - anchor) / 1000;
@@ -120,7 +127,7 @@ function handleForward() {
 
   db.prepare('UPDATE trips SET current_stop_index = ? WHERE trip_id = ?').run(newIndex, trip.trip_id);
 
-  const announcement = composeAnnouncement(stopToAnnounce);
+  const announcement = composeAnnouncement(stopToAnnounce, { isLastStop });
   const ad = contentScheduler.selectScreenAd({ routeId: trip.route_id, tier: busTier(), busId: getDeviceConfig()?.bus_id });
 
   for (const seg of announcement) {
@@ -164,8 +171,10 @@ function handleReplay() {
     return;
   }
   const trip = state.trip;
+  const stops = tripEngine.getStopsForRoute(trip.route_id, trip.direction);
   const stop = getStop(trip.route_id, trip.direction, trip.current_stop_index);
-  const announcement = composeAnnouncement(stop);
+  const isLastStop = trip.current_stop_index === stops.length - 1;
+  const announcement = composeAnnouncement(stop, { isLastStop });
 
   db.prepare("INSERT INTO button_events (signal, timestamp) VALUES (3, datetime('now'))").run();
   for (const seg of announcement) {

@@ -1479,7 +1479,7 @@ const TYPE_LABELS = {
   music: 'Music (legacy)',
   stop_name: 'Stop name announcements',
   stop_name_ad: 'Stop name (sponsored) announcements',
-  chime: 'Chimes', filler: 'Fillers', outro: 'Outros',
+  chime: 'Attention please', filler: 'Next stop is', outro: 'Thanks for the journey (last stop)',
 };
 
 async function loadAnalytics() {

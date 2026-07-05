@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS stops (
     name_en               TEXT,
     sequence_no           INTEGER,
     ads_enabled           INTEGER NOT NULL DEFAULT 0, -- swap stop_name -> stop_name_ad when true (and a clip exists)
-    announcement_template TEXT NOT NULL DEFAULT 'chime,filler,stop_name,outro' -- comma list; stop_name is swapped for stop_name_ad when ads_enabled
+    announcement_template TEXT NOT NULL DEFAULT 'chime,filler,stop_name' -- chime=attention please; filler=next stop is; stop_name swapped for stop_name_ad when ads_enabled; outro appended on last stop only
 );
 
 -- Which routes include which stops, and in what order. A stop can belong to many routes.
