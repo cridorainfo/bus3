@@ -80,6 +80,25 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function isAdminEditing() {
+  return !!(state.editingBusId || state.editingRouteId || state.editingStopId || state.editingRouteStopId || state.editingCampaignId);
+}
+
+// loadBuses() rebuilds the whole bus list every 5s for live status — skip while the admin is
+// mid-edit or typing in any form, or their input gets wiped on the next tick.
+function isTypingInAdminForm() {
+  const el = document.activeElement;
+  if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return false;
+  return !!el.closest(
+    '#form-add-bus, #form-pair-bus, #form-add-route, #form-ad-timing, #form-add-banner, #form-add-fullscreen, #form-add-announcement, #form-add-campaign, .edit-bus-form, .edit-route-form, .edit-stop-form, .edit-route-stop-form, .edit-campaign-form, .stop-search-input, .route-search-input, #stopnames-search, .new-stop-ml, .new-stop-en'
+  );
+}
+
+async function pollBuses() {
+  if (isAdminEditing() || isTypingInAdminForm()) return;
+  await loadBuses();
+}
+
 // ===================== BUSES =====================
 
 async function loadBuses() {
@@ -1375,4 +1394,4 @@ async function refreshAll() {
 }
 
 refreshAll();
-setInterval(loadBuses, 5000); // live-ish fleet status without a second WebSocket on the admin side
+setInterval(pollBuses, 5000); // live-ish fleet status without a second WebSocket on the admin side
