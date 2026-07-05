@@ -296,22 +296,18 @@ async function applySyncState(payload) {
   // genuine cloud-side delete or the bus simply lost access (route unassigned, etc.) — both cases
   // should remove the local copy identically, same as route_stops already does.
   const incomingContentIds = new Set((contentItems || []).map((c) => c.content_id));
-  const localContentRows = db.prepare('SELECT content_id, file_path FROM content_items').all();
+  const incomingGlobalTypes = new Set((contentItems || []).filter((c) => !c.route_id && !c.stop_id).map((c) => c.type));
+  const localContentRows = db.prepare('SELECT content_id, file_path, type FROM content_items').all();
+  const nullPlayLogContentRef = db.prepare('UPDATE play_logs SET content_id = NULL WHERE content_id = ?');
   const deleteContentItem = db.prepare('DELETE FROM content_items WHERE content_id = ?');
   db.transaction(() => {
     for (const row of localContentRows) {
       if (incomingContentIds.has(row.content_id)) continue;
-      try {
-        deleteContentItem.run(row.content_id);
-      } catch (err) {
-        // A Hub whose local DB predates the loosened play_logs.content_id reference (see
-        // schema.sql) can still have historical play_logs rows pointing at this content_id,
-        // which blocks the delete under a still-enforced FK — skip this one row rather than
-        // aborting the whole reconciliation; it's retried (and typically still blocked) on every
-        // future sync, which is harmless since a stale row like this is cosmetic, not functional.
-        console.warn(`[syncAgent] could not delete stale content_item ${row.content_id}: ${err.message}`);
-        continue;
-      }
+      // Keep seeded chime/filler/outro until the cloud ships a replacement — otherwise a fresh
+      // paired bus loses all announcement segments the moment it first syncs.
+      if (['chime', 'filler', 'outro'].includes(row.type) && !incomingGlobalTypes.has(row.type)) continue;
+      nullPlayLogContentRef.run(row.content_id);
+      deleteContentItem.run(row.content_id);
       if (row.file_path) {
         const localPath = path.join(ASSETS_DIR, row.file_path.replace(/^\//, ''));
         fs.unlink(localPath, () => {}); // best-effort; a missing file shouldn't block the DB delete
