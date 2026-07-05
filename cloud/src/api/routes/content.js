@@ -78,6 +78,17 @@ router.post('/', upload.single('file'), (req, res) => {
     }
   }
 
+  // One stop_name / stop_name_ad clip per stop — uploading replaces the previous file.
+  if (['stop_name', 'stop_name_ad'].includes(type) && stop_id) {
+    const existing = db
+      .prepare('SELECT content_id, file_path FROM content_items WHERE type = ? AND stop_id = ?')
+      .all(type, stop_id);
+    for (const old of existing) {
+      db.prepare('DELETE FROM content_items WHERE content_id = ?').run(old.content_id);
+      fs.unlink(path.join(ASSETS_DIR, old.file_path), () => {});
+    }
+  }
+
   db.prepare(`
     INSERT INTO content_items
       (content_id, type, file_path, original_filename, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id, target_bus_id, display_mode)

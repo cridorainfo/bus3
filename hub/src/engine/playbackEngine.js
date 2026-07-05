@@ -37,28 +37,31 @@ function fetchGlobalClip(type) {
   `).get(type, type);
 }
 
-// Fixed announcement shape:
+function fetchStopClip(stop, type) {
+  return db.prepare(`
+    SELECT * FROM content_items
+    WHERE type = ? AND stop_id = ?
+    ORDER BY CASE WHEN content_id LIKE '%-default' THEN 1 ELSE 0 END, content_id DESC
+    LIMIT 1
+  `).get(type, stop.stop_id);
+}
+
+// Fixed announcement shape (order is always enforced here, not from announcement_template):
 //   Normal stop: attention please (chime) → next stop is (filler) → stop name (or stop_name_ad)
 //   Last stop:   same three parts → thanks for the journey (outro)
 function composeAnnouncement(stop, { isLastStop = false } = {}) {
-  const types = stop.announcement_template.split(',').map((s) => s.trim());
   const segments = [];
-  for (const type of types) {
-    if (type === 'outro' && !isLastStop) continue;
-    let item = null;
-    if (type === 'chime' || type === 'filler' || type === 'outro') {
-      item = fetchGlobalClip(type);
-    } else if (type === 'stop_name') {
-      if (stop.ads_enabled) {
-        item = db.prepare('SELECT * FROM content_items WHERE type = ? AND stop_id = ? LIMIT 1').get('stop_name_ad', stop.stop_id);
-      }
-      if (!item) {
-        item = db.prepare('SELECT * FROM content_items WHERE type = ? AND stop_id = ? LIMIT 1').get('stop_name', stop.stop_id);
-      }
-    }
-    if (item) segments.push(item);
-  }
-  if (isLastStop && !segments.some((s) => s.type === 'outro')) {
+  const chime = fetchGlobalClip('chime');
+  const filler = fetchGlobalClip('filler');
+  if (chime) segments.push(chime);
+  if (filler) segments.push(filler);
+
+  let stopClip = null;
+  if (stop.ads_enabled) stopClip = fetchStopClip(stop, 'stop_name_ad');
+  if (!stopClip) stopClip = fetchStopClip(stop, 'stop_name');
+  if (stopClip) segments.push(stopClip);
+
+  if (isLastStop) {
     const outro = fetchGlobalClip('outro');
     if (outro) segments.push(outro);
   }

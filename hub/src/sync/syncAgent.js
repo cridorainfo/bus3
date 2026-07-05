@@ -349,7 +349,9 @@ async function applySyncState(payload) {
   })();
 
   enforceSingleGlobalClipPerType(contentItems, downloadOkById, nullPlayLogContentRef, deleteContentItem);
+  enforceSingleStopClipPerType(contentItems, downloadOkById, nullPlayLogContentRef, deleteContentItem);
   dedupeGlobalAnnouncementClips(nullPlayLogContentRef, deleteContentItem);
+  purgeStaleDefaultClips(downloadOkById, nullPlayLogContentRef, deleteContentItem);
   purgeOrphanAssetFiles();
 
   db.prepare("UPDATE device_config SET last_sync_at = datetime('now') WHERE bus_id = ?").run(busId);
@@ -419,9 +421,9 @@ function removeContentItem(contentId, filePath, nullPlayLogContentRef, deleteCon
 
 function enforceSingleGlobalClipPerType(contentItems, downloadOkById, nullPlayLogContentRef, deleteContentItem) {
   for (const type of GLOBAL_ANNOUNCE_TYPES) {
-    const incoming = (contentItems || []).filter(
-      (c) => c.type === type && !c.route_id && !c.stop_id && downloadOkById.get(c.content_id)
-    );
+    const incoming = (contentItems || [])
+      .filter((c) => c.type === type && !c.route_id && !c.stop_id && downloadOkById.get(c.content_id))
+      .sort((a, b) => b.content_id.localeCompare(a.content_id));
     if (incoming.length === 0) continue;
     const keepId = incoming[0].content_id;
     const locals = db.prepare(`
@@ -430,6 +432,42 @@ function enforceSingleGlobalClipPerType(contentItems, downloadOkById, nullPlayLo
     `).all(type);
     for (const row of locals) {
       if (row.content_id === keepId) continue;
+      removeContentItem(row.content_id, row.file_path, nullPlayLogContentRef, deleteContentItem);
+    }
+  }
+}
+
+function enforceSingleStopClipPerType(contentItems, downloadOkById, nullPlayLogContentRef, deleteContentItem) {
+  const keepByKey = new Map();
+  for (const item of contentItems || []) {
+    if (!item.stop_id || !['stop_name', 'stop_name_ad'].includes(item.type)) continue;
+    if (!downloadOkById.get(item.content_id)) continue;
+    const key = `${item.stop_id}:${item.type}`;
+    if (!keepByKey.has(key)) keepByKey.set(key, item.content_id);
+  }
+  for (const [key, keepId] of keepByKey) {
+    const [stopId, type] = key.split(':');
+    const locals = db.prepare('SELECT content_id, file_path FROM content_items WHERE stop_id = ? AND type = ?').all(stopId, type);
+    for (const row of locals) {
+      if (row.content_id === keepId) continue;
+      removeContentItem(row.content_id, row.file_path, nullPlayLogContentRef, deleteContentItem);
+    }
+  }
+}
+
+function purgeStaleDefaultClips(downloadOkById, nullPlayLogContentRef, deleteContentItem) {
+  for (const type of GLOBAL_ANNOUNCE_TYPES) {
+    const hasCloudClip = db.prepare(`
+      SELECT 1 FROM content_items
+      WHERE type = ? AND route_id IS NULL AND stop_id IS NULL AND content_id NOT LIKE '%-default'
+      LIMIT 1
+    `).get(type);
+    if (!hasCloudClip) continue;
+    const defaults = db.prepare(`
+      SELECT content_id, file_path FROM content_items
+      WHERE type = ? AND route_id IS NULL AND stop_id IS NULL AND content_id LIKE '%-default'
+    `).all(type);
+    for (const row of defaults) {
       removeContentItem(row.content_id, row.file_path, nullPlayLogContentRef, deleteContentItem);
     }
   }
@@ -447,7 +485,12 @@ function purgeOrphanAssetFiles() {
     for (const name of fs.readdirSync(dir)) {
       if (name.startsWith('.')) continue;
       if (!referenced.has(name)) {
-        fs.unlink(path.join(dir, name), () => {});
+        try {
+          fs.unlinkSync(path.join(dir, name));
+          console.log(`[syncAgent] removed stale ${sub} file ${name}`);
+        } catch (err) {
+          console.warn(`[syncAgent] could not remove stale ${sub} file ${name}: ${err.message}`);
+        }
       }
     }
   }
@@ -475,19 +518,25 @@ async function ensureContentDownloaded(item) {
   const localPath = path.join(dir, filename);
   const localUrlPath = `/${isAudio ? 'audio' : 'media'}/${filename}`;
 
-  const needsDownload = !fs.existsSync(localPath) || fs.statSync(localPath).size === 0;
-  if (needsDownload) {
-    try {
-      const url = `${CLOUD_HTTP_BASE}/content/${item.file_path}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length === 0) throw new Error('empty file');
-      fs.writeFileSync(localPath, buf);
-    } catch (err) {
+  const existingRow = db.prepare('SELECT file_path FROM content_items WHERE content_id = ?').get(item.content_id);
+  if (existingRow?.file_path && path.basename(existingRow.file_path) !== filename) {
+    unlinkContentFile(existingRow.file_path);
+  }
+
+  // Always re-fetch from cloud on sync so the hub never keeps playing an older local copy.
+  try {
+    const url = `${CLOUD_HTTP_BASE}/content/${item.file_path}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length === 0) throw new Error('empty file');
+    fs.writeFileSync(localPath, buf);
+  } catch (err) {
+    if (!fs.existsSync(localPath) || fs.statSync(localPath).size === 0) {
       console.warn(`[syncAgent] could not download content ${item.content_id} (${item.type}): ${err.message}`);
-      return false; // don't point a DB row at a file that doesn't actually exist locally
+      return false;
     }
+    console.warn(`[syncAgent] cloud download failed for ${item.content_id}, keeping existing local file: ${err.message}`);
   }
 
   db.prepare(`

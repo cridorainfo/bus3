@@ -265,7 +265,7 @@ function playAudioQueue(segments) {
 function playNextInQueue() {
   if (audioQueue.length === 0) return;
   const seg = audioQueue.shift();
-  audioPlayer.src = seg.file_path;
+  audioPlayer.src = `${seg.file_path}?v=${encodeURIComponent(seg.content_id)}`;
   audioPlayer.play().catch(() => {}); // autoplay may need a user gesture on first load; kiosk mode allows it
 }
 
