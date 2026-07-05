@@ -15,7 +15,7 @@
   --amber: #f2a51a;
   --shadow: 0 2px 6px rgba(20, 35, 27, 0.06), 0 12px 32px rgba(20, 35, 27, 0.07);
   --font-en: 'Segoe UI', Arial, sans-serif;
-  --font-ml: 'Noto Sans Malayalam', var(--font-en);
+  --font-ml: 'Noto Sans Malayalam', 'Nirmala UI', 'Kartika', 'Meera Inimai', sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -165,7 +165,9 @@ html, body {
   color: var(--green-deep);
   padding-left: 24px;
   border-left: 2px solid var(--green-line);
+  font-family: var(--font-ml);
 }
+#route-name-label.lang-en { font-family: var(--font-en); }
 #route-name-label:empty { display: none; }
 
 .top-right { text-align: right; }
@@ -244,7 +246,9 @@ html, body {
   font-weight: 800;
   color: var(--green-dark);
   line-height: 1.15;
+  font-family: var(--font-ml);
 }
+#next-stop-name.lang-en { font-family: var(--font-en); }
 #next-stop-name.animate { animation: slideFadeUp 0.6s ease; }
 #next-stop-name.lang-toggle { animation: fadeIn 0.35s ease; }
 
@@ -337,7 +341,9 @@ html, body {
   color: var(--muted);
   white-space: nowrap;
   transition: color 0.5s ease;
+  font-family: var(--font-ml);
 }
+.stop-label.lang-en { font-family: var(--font-en); }
 
 .stop.done .stop-label { color: var(--green); font-weight: 600; }
 .stop.current .stop-label { color: var(--green-deep); font-size: 26px; font-weight: 800; }
@@ -380,7 +386,9 @@ html, body {
   font-size: 62px;
   font-weight: 800;
   color: var(--green-dark);
+  font-family: var(--font-ml);
 }
+#mini-next-stop-name.lang-en { font-family: var(--font-en); }
 #mini-next-stop-name.lang-toggle { animation: fadeIn 0.35s ease; }
 
 .stop-label.lang-toggle { animation: fadeIn 0.35s ease; }

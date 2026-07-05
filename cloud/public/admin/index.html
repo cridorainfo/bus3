@@ -76,6 +76,22 @@
         <p class="subtitle">A route is a stop list any number of buses can share. Find or create a stop here — manage its audio and ads in Content &gt; Stop Names.</p>
       </div>
 
+      <form id="form-push-routes" class="card form-inline">
+        <div class="field">
+          <label>Push routes to</label>
+          <select id="push-routes-scope">
+            <option value="all">All buses</option>
+            <option value="selected">Selected buses…</option>
+          </select>
+        </div>
+        <div class="field" id="push-routes-bus-wrap" style="display:none;min-width:220px">
+          <label>Buses (Ctrl+click)</label>
+          <select id="push-routes-buses" multiple size="4" style="min-width:220px"></select>
+        </div>
+        <button type="submit" class="btn btn-primary">Push routes now</button>
+        <span class="hint" id="push-routes-hint" style="margin:0;align-self:center">Online buses update instantly; offline buses catch up when they reconnect.</span>
+      </form>
+
       <form id="form-add-route" class="card form-inline">
         <div class="field">
           <label>Route name (English)</label>

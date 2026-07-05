@@ -82,7 +82,7 @@ router.put('/:routeId', (req, res) => {
   const route = db.prepare('SELECT * FROM routes WHERE route_id = ?').get(routeId);
   if (!route) return res.status(404).json({ error: 'route_not_found' });
 
-  const { name, name_ml, tier } = req.body || {};
+  const { name, name_ml, tier, push: shouldPush } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name_required' });
 
   db.prepare('UPDATE routes SET name = ?, name_ml = ?, tier = ? WHERE route_id = ?').run(
@@ -92,7 +92,7 @@ router.put('/:routeId', (req, res) => {
     routeId
   );
 
-  pushToBusesOnRoute(routeId);
+  if (shouldPush !== false) pushToBusesOnRoute(routeId);
   res.json({ ...db.prepare('SELECT * FROM routes WHERE route_id = ?').get(routeId), stops: getStops(routeId) });
 });
 

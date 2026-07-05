@@ -49,7 +49,7 @@ router.put('/:stopId', (req, res) => {
   const stop = db.prepare('SELECT * FROM stops WHERE stop_id = ?').get(req.params.stopId);
   if (!stop) return res.status(404).json({ error: 'stop_not_found' });
 
-  const { name_ml, name_en, announcement_template } = req.body || {};
+  const { name_ml, name_en, announcement_template, push: shouldPush } = req.body || {};
   db.prepare('UPDATE stops SET name_ml = ?, name_en = ?, announcement_template = ? WHERE stop_id = ?').run(
     name_ml ?? stop.name_ml,
     name_en ?? stop.name_en,
@@ -57,7 +57,7 @@ router.put('/:stopId', (req, res) => {
     stop.stop_id
   );
 
-  pushToBusesOnStop(stop.stop_id);
+  if (shouldPush !== false) pushToBusesOnStop(stop.stop_id);
   res.json(db.prepare('SELECT * FROM stops WHERE stop_id = ?').get(stop.stop_id));
 });
 

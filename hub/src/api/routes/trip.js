@@ -3,7 +3,7 @@ const db = require('../../db/db');
 const state = require('../../engine/state');
 const tripEngine = require('../../engine/tripEngine');
 const playbackEngine = require('../../engine/playbackEngine');
-const { getBusId, getDeviceConfig, getRouteName } = require('../../config/deviceConfig');
+const { getBusId, getDeviceConfig, getRouteName, getRouteNameMl } = require('../../config/deviceConfig');
 const { requireDevice } = require('./auth');
 
 const router = express.Router();
@@ -40,7 +40,12 @@ router.post('/select-route', requireDevice, (req, res) => {
   db.prepare('UPDATE device_config SET route_assigned = ? WHERE bus_id = ?').run(route_id, getBusId());
   const cfg = getDeviceConfig();
   state.update({
-    bus: { ...state.bus, route_assigned: cfg.route_assigned, route_name: getRouteName(cfg.route_assigned) },
+    bus: {
+      ...state.bus,
+      route_assigned: cfg.route_assigned,
+      route_name: getRouteName(cfg.route_assigned),
+      route_name_ml: getRouteNameMl(cfg.route_assigned),
+    },
   });
   res.json({ ok: true, route_id });
 });

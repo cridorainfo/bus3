@@ -28,10 +28,18 @@ function isPaired() {
 // Joins in the route's friendly name (not just its ID) for display in the Panel/Display
 // identity banner — a non-technical driver/conductor should see "Kochi - Thrissur Express",
 // not a raw route_id slug.
-function getRouteName(routeId) {
-  if (!routeId) return null;
-  const route = db.prepare('SELECT name FROM routes WHERE route_id = ?').get(routeId);
-  return route ? route.name : null;
+function getRouteFields(routeId) {
+  if (!routeId) return { name: null, name_ml: null };
+  const route = db.prepare('SELECT name, name_ml FROM routes WHERE route_id = ?').get(routeId);
+  return route ? { name: route.name, name_ml: route.name_ml } : { name: null, name_ml: null };
 }
 
-module.exports = { getBusId, getApiKey, isPaired, getDeviceConfig, getRouteName };
+function getRouteName(routeId) {
+  return getRouteFields(routeId).name;
+}
+
+function getRouteNameMl(routeId) {
+  return getRouteFields(routeId).name_ml;
+}
+
+module.exports = { getBusId, getApiKey, isPaired, getDeviceConfig, getRouteName, getRouteNameMl, getRouteFields };

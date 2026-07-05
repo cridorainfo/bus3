@@ -80,6 +80,10 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/`/g, '&#96;');
+}
+
 function isAdminEditing() {
   return !!(state.editingBusId || state.editingRouteId || state.editingStopId || state.editingRouteStopId || state.editingCampaignId);
 }
@@ -90,7 +94,7 @@ function isTypingInAdminForm() {
   const el = document.activeElement;
   if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return false;
   return !!el.closest(
-    '#form-add-bus, #form-pair-bus, #form-add-route, #form-ad-timing, #form-push-sync, #form-add-banner, #form-add-fullscreen, #form-add-announcement, #form-add-campaign, .edit-bus-form, .edit-route-form, .edit-stop-form, .edit-route-stop-form, .edit-campaign-form, .stop-search-input, .route-search-input, #stopnames-search, .new-stop-ml, .new-stop-en'
+    '#form-add-bus, #form-pair-bus, #form-add-route, #form-ad-timing, #form-push-sync, #form-push-routes, #form-add-banner, #form-add-fullscreen, #form-add-announcement, #form-add-campaign, .edit-bus-form, .edit-route-form, .edit-stop-form, .edit-route-stop-form, .edit-campaign-form, .stop-search-input, .route-search-input, #stopnames-search, .new-stop-ml, .new-stop-en, .stop-edit-ml, .stop-edit-en'
   );
 }
 
@@ -107,6 +111,7 @@ async function loadBuses() {
   populatePairBusSelect();
   populateBusTargetSelects();
   populatePushSyncBuses();
+  populatePushRoutesBuses();
   loadPendingPairings();
 }
 
@@ -366,6 +371,16 @@ function populatePushSyncBuses() {
   }
 }
 
+function populatePushRoutesBuses() {
+  const sel = document.getElementById('push-routes-buses');
+  if (!sel) return;
+  const selected = new Set(Array.from(sel.selectedOptions).map((o) => o.value));
+  sel.innerHTML = state.buses.map((b) => `<option value="${b.bus_id}">${escapeHtml(b.friendly_name || b.reg_number)} (${escapeHtml(b.reg_number)})</option>`).join('');
+  for (const opt of sel.options) {
+    if (selected.has(opt.value)) opt.selected = true;
+  }
+}
+
 function populatePairBusSelect() {
   const sel = document.getElementById('pair-bus-select');
   // Preserve the current selection only if it's still a valid option after refresh — restoring
@@ -469,6 +484,7 @@ function renderRoutes() {
               name: form.querySelector('.edit-route-name').value,
               name_ml: form.querySelector('.edit-route-name-ml').value,
               tier: form.querySelector('.edit-route-tier').value,
+              push: false,
             }),
           });
           state.editingRouteId = null;
@@ -510,6 +526,50 @@ function renderRoutes() {
   }
 }
 
+async function pushRoutesToBuses({ routeIds, busIds, hintEl }) {
+  const body = {};
+  if (routeIds && routeIds.length) body.route_ids = routeIds;
+  if (busIds && busIds.length) body.bus_ids = busIds;
+  const result = await api('/api/sync/push-routes', { method: 'POST', body: JSON.stringify(body) });
+  const msg = `Pushed to ${result.pushed.length} online bus(es)${result.offline.length ? ` · ${result.offline.length} offline (will sync on reconnect)` : ''}.`;
+  if (hintEl) {
+    hintEl.textContent = msg;
+    hintEl.className = 'hint success';
+  }
+  return result;
+}
+
+async function saveRouteStopsFromEditor(mount, routeId, routeDetail) {
+  const card = mount.closest('.card');
+  const routeForm = card && card.querySelector('.edit-route-form');
+  if (routeForm) {
+    await api(`/api/routes/${routeId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: routeForm.querySelector('.edit-route-name').value,
+        name_ml: routeForm.querySelector('.edit-route-name-ml').value,
+        tier: routeForm.querySelector('.edit-route-tier').value,
+        push: false,
+      }),
+    });
+  }
+  const rows = mount.querySelectorAll('.stop-row');
+  for (const row of rows) {
+    const stopId = row.dataset.stopId;
+    await api(`/api/stops/${stopId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name_ml: row.querySelector('.stop-edit-ml').value,
+        name_en: row.querySelector('.stop-edit-en').value,
+        push: false,
+      }),
+    });
+  }
+  state.editingRouteId = null;
+  await loadRoutes();
+  reloadStopDirectoryPreservingSearch();
+}
+
 async function renderStopEditor(mount, routeId) {
   const routeDetail = await api(`/api/routes/${routeId}`);
   const stops = routeDetail.stops;
@@ -522,68 +582,25 @@ async function renderStopEditor(mount, routeId) {
   }
 
   stops.forEach((stop, idx) => {
-    // Ads are managed from Content > Stop Names now — this is a read-only status badge so
-    // there's exactly one place that toggles it.
     const adsBadge = stop.has_ad_clip
       ? `<span class="also-used-badge ${stop.ads_enabled ? 'ads-on' : ''}">Ads: ${stop.ads_enabled ? 'on' : 'off'}</span>`
       : '';
-    const isEditingStop = state.editingRouteStopId === stop.stop_id;
-    const namesBlock = isEditingStop
-      ? `
-        <form class="edit-route-stop-form">
-          <div class="field"><label>Malayalam name</label><input type="text" class="edit-route-stop-ml" value="${escapeHtml(stop.name_ml || '')}" required /></div>
-          <div class="field"><label>English name</label><input type="text" class="edit-route-stop-en" value="${escapeHtml(stop.name_en || '')}" /></div>
-          <div class="bus-actions">
-            <button type="submit" class="btn btn-primary btn-small">Save</button>
-            <button type="button" class="btn btn-ghost btn-small cancel-edit-route-stop">Cancel</button>
-          </div>
-        </form>
-      `
-      : `<div class="stop-name-ml">${escapeHtml(bothNames({ name: stop.name_en, name_ml: stop.name_ml }))}</div>`;
 
     const row = el(`
       <div class="stop-row" data-stop-id="${stop.stop_id}">
         <div class="stop-seq">${idx + 1}</div>
-        <div class="stop-names">${namesBlock}</div>
+        <div class="stop-names stop-names-editable">
+          <div class="field"><label>Malayalam</label><input type="text" class="stop-edit-ml" value="${escapeAttr(stop.name_ml || '')}" required /></div>
+          <div class="field"><label>English</label><input type="text" class="stop-edit-en" value="${escapeAttr(stop.name_en || '')}" /></div>
+        </div>
         ${adsBadge}
         <div class="stop-row-actions">
-          ${isEditingStop ? '' : '<button class="icon-btn edit-route-stop" title="Edit name">✎</button>'}
           <button class="icon-btn move-up" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
           <button class="icon-btn move-down" title="Move down" ${idx === stops.length - 1 ? 'disabled' : ''}>↓</button>
           <button class="icon-btn remove-stop" title="Unlink from this route">✕</button>
         </div>
       </div>
     `);
-
-    if (isEditingStop) {
-      const form = row.querySelector('.edit-route-stop-form');
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        try {
-          await api(`/api/stops/${stop.stop_id}`, {
-            method: 'PUT',
-            body: JSON.stringify({
-              name_ml: form.querySelector('.edit-route-stop-ml').value,
-              name_en: form.querySelector('.edit-route-stop-en').value,
-            }),
-          });
-          state.editingRouteStopId = null;
-          loadRoutes();
-          reloadStopDirectoryPreservingSearch();
-        } catch (err) {
-          alert(err.message);
-        }
-      });
-      row.querySelector('.cancel-edit-route-stop').addEventListener('click', () => {
-        state.editingRouteStopId = null;
-        renderStopEditor(mount, routeId);
-      });
-    } else {
-      row.querySelector('.edit-route-stop').addEventListener('click', () => {
-        state.editingRouteStopId = stop.stop_id;
-        renderStopEditor(mount, routeId);
-      });
-    }
 
     row.querySelector('.move-up').addEventListener('click', async () => {
       const order = stops.map((s) => s.stop_id);
@@ -617,7 +634,7 @@ async function renderStopEditor(mount, routeId) {
       try {
         await api(`/api/routes/${routeId}`, {
           method: 'PUT',
-          body: JSON.stringify({ name: suggestedName, name_ml: suggestedNameMl, tier: routeDetail.tier }),
+          body: JSON.stringify({ name: suggestedName, name_ml: suggestedNameMl, tier: routeDetail.tier, push: false }),
         });
         loadRoutes();
       } catch (err) {
@@ -625,6 +642,41 @@ async function renderStopEditor(mount, routeId) {
       }
     });
     editor.appendChild(suggestBtn);
+  }
+
+  if (stops.length > 0) {
+    const toolbar = el(`
+      <div class="route-editor-toolbar bus-actions" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <button type="button" class="btn btn-primary btn-small save-route-stops">Save changes</button>
+        <button type="button" class="btn btn-ghost btn-small push-route-buses">Push to buses</button>
+        <span class="hint route-editor-hint" style="margin:0">Save writes to the server · Push sends this route to online buses instantly.</span>
+      </div>
+    `);
+    toolbar.querySelector('.save-route-stops').addEventListener('click', async () => {
+      const hint = toolbar.querySelector('.route-editor-hint');
+      hint.textContent = 'Saving…';
+      hint.className = 'hint';
+      try {
+        await saveRouteStopsFromEditor(mount, routeId, routeDetail);
+        hint.textContent = 'Saved — click Push to buses to update live displays.';
+        hint.className = 'hint success';
+      } catch (err) {
+        hint.textContent = err.message;
+        hint.className = 'hint error';
+      }
+    });
+    toolbar.querySelector('.push-route-buses').addEventListener('click', async () => {
+      const hint = toolbar.querySelector('.route-editor-hint');
+      hint.textContent = 'Pushing…';
+      hint.className = 'hint';
+      try {
+        await pushRoutesToBuses({ routeIds: [routeId], hintEl: hint });
+      } catch (err) {
+        hint.textContent = err.message;
+        hint.className = 'hint error';
+      }
+    });
+    editor.appendChild(toolbar);
   }
 
   editor.appendChild(buildStopPicker(routeId, stops.map((s) => s.stop_id)));
@@ -861,7 +913,7 @@ document.getElementById('form-add-announcement').addEventListener('submit', asyn
   try {
     await api('/api/content', { method: 'POST', body: fd });
     document.getElementById('form-add-announcement').reset();
-    hint.textContent = 'Uploaded — if there was already a clip in this slot, delete the old one below so only one plays.';
+    hint.textContent = 'Uploaded — previous clip in this slot was replaced. Use Push sync now (Content tab) if the bus is online.';
     hint.className = 'hint success';
     loadContent();
   } catch (err) {
@@ -1162,6 +1214,30 @@ document.getElementById('form-push-sync').addEventListener('submit', async (e) =
     hint.textContent = `Sync pushed to ${pushed} online bus${pushed === 1 ? '' : 'es'}${offline ? ` (${offline} offline — will catch up on reconnect)` : ''}.`;
     hint.className = 'hint success';
     setTimeout(() => (hint.textContent = ''), 6000);
+  } catch (err) {
+    hint.textContent = err.message;
+    hint.className = 'hint error';
+  }
+});
+
+document.getElementById('push-routes-scope').addEventListener('change', (e) => {
+  document.getElementById('push-routes-bus-wrap').style.display = e.target.value === 'selected' ? '' : 'none';
+});
+
+document.getElementById('form-push-routes').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const hint = document.getElementById('push-routes-hint');
+  hint.textContent = 'Pushing…';
+  hint.className = 'hint';
+  try {
+    const scope = document.getElementById('push-routes-scope').value;
+    const busIds = scope === 'selected'
+      ? Array.from(document.getElementById('push-routes-buses').selectedOptions).map((o) => o.value)
+      : null;
+    if (scope === 'selected' && (!busIds || busIds.length === 0)) {
+      throw new Error('Select at least one bus.');
+    }
+    await pushRoutesToBuses({ busIds, hintEl: hint });
   } catch (err) {
     hint.textContent = err.message;
     hint.className = 'hint error';

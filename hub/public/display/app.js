@@ -107,7 +107,15 @@ function renderConnectionState(pairingId, connectedDeviceCount) {
 
 // --- Top bar ---
 function renderTopBar(state) {
-  routeNameLabel.textContent = state.bus && state.bus.route_name ? state.bus.route_name : '';
+  const ml = state.bus && state.bus.route_name_ml;
+  const en = state.bus && state.bus.route_name;
+  if (ml) {
+    routeNameLabel.textContent = ml;
+    routeNameLabel.className = 'lang-ml';
+  } else {
+    routeNameLabel.textContent = en || '';
+    routeNameLabel.className = en ? 'lang-en' : '';
+  }
 
   pillOnline.textContent = state.cloudOnline ? 'Online' : 'No Internet';
   pillOnline.className = `pill ${state.cloudOnline ? 'ok' : 'bad'}`;
@@ -223,7 +231,8 @@ function handleAd(ad) {
     clearTimeout(videoFailsafeTimer);
     videoFailsafeTimer = setTimeout(() => setVideoMode(false), ((ad.duration_sec || 30) + 5) * 1000);
   } else if (ad.type === 'ad_image' || (ad.type === 'ad_banner' && ad.display_mode === 'fullscreen')) {
-    adFullscreenImage.src = ad.file_path;
+    const imageSrc = `${ad.file_path}${ad.file_path.includes('?') ? '&' : '?'}v=${encodeURIComponent(ad.content_id || '')}`;
+    if (adFullscreenImage.src !== new URL(imageSrc, location.href).href) adFullscreenImage.src = imageSrc;
     setVideoMode(true, 'image');
     // Static fullscreen image — no natural 'ended' event; return after the admin-set duration.
     clearTimeout(videoFailsafeTimer);
@@ -244,6 +253,7 @@ function exitVideoMode() {
 
 adVideo.addEventListener('ended', exitVideoMode);
 adVideo.addEventListener('error', exitVideoMode); // a missing/broken file must never leave a black center
+adFullscreenImage.addEventListener('error', exitVideoMode);
 
 // --- Announcement audio (sequential segments through the single aux output) ---
 function playAudioQueue(segments) {
@@ -292,6 +302,9 @@ function connect() {
     latestTrip = payload.trip;
     renderTopBar(payload);
     syncStopNameToggleSetting(payload.settings);
+    if (payload.contentVersion !== stopsCache.contentVersion) {
+      stopsCache = { routeId: null, direction: null, contentVersion: -1, stops: [] };
+    }
     await ensureStopsLoaded(payload.trip, payload.contentVersion);
     renderNextStop();
     renderTimeline();

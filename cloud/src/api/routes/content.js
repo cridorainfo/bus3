@@ -65,6 +65,19 @@ router.post('/', upload.single('file'), (req, res) => {
 
   const contentId = req.file.filename.replace(path.extname(req.file.filename), '');
   const resolvedDisplayMode = type === 'ad_image' ? 'fullscreen' : display_mode === 'fullscreen' ? 'fullscreen' : 'banner';
+
+  // Chime/filler/outro are single global slots — replace any existing clip so buses never
+  // sync multiple rows of the same type and pick the wrong one at playback time.
+  if (['chime', 'filler', 'outro'].includes(type) && !route_id && !stop_id && !target_bus_id) {
+    const existing = db
+      .prepare('SELECT content_id, file_path FROM content_items WHERE type = ? AND route_id IS NULL AND stop_id IS NULL AND target_bus_id IS NULL')
+      .all(type);
+    for (const old of existing) {
+      db.prepare('DELETE FROM content_items WHERE content_id = ?').run(old.content_id);
+      fs.unlink(path.join(ASSETS_DIR, old.file_path), () => {});
+    }
+  }
+
   db.prepare(`
     INSERT INTO content_items
       (content_id, type, file_path, original_filename, duration_sec, tier, advertiser_id, campaign_id, route_id, stop_id, target_bus_id, display_mode)

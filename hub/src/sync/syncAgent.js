@@ -3,7 +3,7 @@ const fs = require('fs');
 const WebSocket = require('ws');
 const db = require('../db/db');
 const state = require('../engine/state');
-const { getBusId, getApiKey, isPaired, getDeviceConfig, getRouteName } = require('../config/deviceConfig');
+const { getBusId, getApiKey, isPaired, getDeviceConfig, getRouteName, getRouteNameMl } = require('../config/deviceConfig');
 const { CLOUD_WS_URL, CLOUD_HTTP_BASE } = require('../config/cloudConfig');
 const { ASSETS_DIR } = require('../config/paths');
 
@@ -239,6 +239,19 @@ async function applySyncState(payload) {
     })();
   }
 
+  // Remove routes no longer assigned to this bus (e.g. seeded demo R1 after cloud pairing) so
+  // the panel picker and display timeline can't show stale stop lists.
+  const deleteOrphanRouteStops = db.prepare('DELETE FROM route_stops WHERE route_id = ?');
+  const deleteOrphanRoute = db.prepare('DELETE FROM routes WHERE route_id = ?');
+  const localAllRouteIds = db.prepare('SELECT route_id FROM routes').all().map((r) => r.route_id);
+  db.transaction(() => {
+    for (const routeId of localAllRouteIds) {
+      if (incomingRouteIds.has(routeId)) continue;
+      deleteOrphanRouteStops.run(routeId);
+      deleteOrphanRoute.run(routeId);
+    }
+  })();
+
   // Reconcile the local assigned_routes mirror to exactly match the incoming assignment set.
   const localAssignedIds = db.prepare('SELECT route_id FROM assigned_routes').all().map((r) => r.route_id);
   const insertAssigned = db.prepare('INSERT OR IGNORE INTO assigned_routes (route_id) VALUES (?)');
@@ -297,15 +310,38 @@ async function applySyncState(payload) {
   // should remove the local copy identically, same as route_stops already does.
   const incomingContentIds = new Set((contentItems || []).map((c) => c.content_id));
   const incomingGlobalTypes = new Set((contentItems || []).filter((c) => !c.route_id && !c.stop_id).map((c) => c.type));
-  const localContentRows = db.prepare('SELECT content_id, file_path, type FROM content_items').all();
+  const localContentRows = db.prepare('SELECT content_id, file_path, type, route_id, stop_id, target_bus_id, tier FROM content_items').all();
   const nullPlayLogContentRef = db.prepare('UPDATE play_logs SET content_id = NULL WHERE content_id = ?');
   const deleteContentItem = db.prepare('DELETE FROM content_items WHERE content_id = ?');
+
+  // Download first — never drop local clips until replacements are actually on disk, otherwise
+  // a failed fetch leaves announcements/ads with nothing to play.
+  const downloadedGlobalTypes = new Set();
+  const downloadOkById = new Map();
+  for (const item of contentItems || []) {
+    const ok = await ensureContentDownloaded(item);
+    downloadOkById.set(item.content_id, ok);
+    if (ok && !item.route_id && !item.stop_id && GLOBAL_ANNOUNCE_TYPES.includes(item.type)) {
+      downloadedGlobalTypes.add(item.type);
+    }
+  }
+
   db.transaction(() => {
     for (const row of localContentRows) {
       if (incomingContentIds.has(row.content_id)) continue;
       // Keep seeded chime/filler/outro until the cloud ships a replacement — otherwise a fresh
       // paired bus loses all announcement segments the moment it first syncs.
-      if (['chime', 'filler', 'outro'].includes(row.type) && !incomingGlobalTypes.has(row.type)) continue;
+      if (GLOBAL_ANNOUNCE_TYPES.includes(row.type) && !incomingGlobalTypes.has(row.type)) continue;
+      // Cloud sent a replacement but the download failed — keep the seed so announcements still play.
+      if (row.content_id.endsWith('-default') && GLOBAL_ANNOUNCE_TYPES.includes(row.type) && !downloadedGlobalTypes.has(row.type)) {
+        continue;
+      }
+      // Same for ads and other content: if the cloud sent a new item in this slot but the file
+      // didn't land locally, keep what's already here until a later sync succeeds.
+      const failedReplacement = (contentItems || []).some(
+        (inc) => !downloadOkById.get(inc.content_id) && sameContentScope(inc, row)
+      );
+      if (failedReplacement) continue;
       nullPlayLogContentRef.run(row.content_id);
       deleteContentItem.run(row.content_id);
       if (row.file_path) {
@@ -315,11 +351,15 @@ async function applySyncState(payload) {
     }
   })();
 
-  for (const item of contentItems || []) {
-    await ensureContentDownloaded(item);
-  }
+  dedupeGlobalAnnouncementClips(nullPlayLogContentRef, deleteContentItem);
 
   db.prepare("UPDATE device_config SET last_sync_at = datetime('now') WHERE bus_id = ?").run(busId);
+
+  // Content pool changed — if a trip is running, rotate the screen ad immediately so new uploads
+  // (e.g. ad_image) show up without waiting for the next Forward or idle interval.
+  if (state.trip && (contentItems || []).length > 0) {
+    require('../engine/playbackEngine').idleAdTick();
+  }
 
   const cfg = getDeviceConfig();
   state.update({
@@ -329,12 +369,40 @@ async function applySyncState(payload) {
       friendly_name: cfg.friendly_name,
       route_assigned: cfg.route_assigned,
       route_name: getRouteName(cfg.route_assigned),
+      route_name_ml: getRouteNameMl(cfg.route_assigned),
     },
     contentVersion: Date.now(), // Panel/Display refetch stops/content on this change (not just route_id)
   });
 }
 
 const AUDIO_TYPES = new Set(['chime', 'filler', 'stop_name', 'stop_name_ad', 'sponsor_snippet', 'outro', 'music']);
+const GLOBAL_ANNOUNCE_TYPES = ['chime', 'filler', 'outro'];
+
+function sameContentScope(a, b) {
+  return a.type === b.type
+    && (a.route_id || null) === (b.route_id || null)
+    && (a.stop_id || null) === (b.stop_id || null)
+    && (a.target_bus_id || null) === (b.target_bus_id || null)
+    && (a.tier || null) === (b.tier || null);
+}
+
+function dedupeGlobalAnnouncementClips(nullPlayLogContentRef, deleteContentItem) {
+  for (const type of GLOBAL_ANNOUNCE_TYPES) {
+    const rows = db.prepare(`
+      SELECT content_id, file_path FROM content_items
+      WHERE type = ? AND route_id IS NULL AND stop_id IS NULL
+      ORDER BY CASE WHEN content_id LIKE '%-default' THEN 1 ELSE 0 END, content_id DESC
+    `).all(type);
+    for (let i = 1; i < rows.length; i += 1) {
+      nullPlayLogContentRef.run(rows[i].content_id);
+      deleteContentItem.run(rows[i].content_id);
+      if (rows[i].file_path) {
+        const localPath = path.join(ASSETS_DIR, rows[i].file_path.replace(/^\//, ''));
+        fs.unlink(localPath, () => {});
+      }
+    }
+  }
+}
 
 async function ensureContentDownloaded(item) {
   const isAudio = AUDIO_TYPES.has(item.type);
@@ -345,16 +413,18 @@ async function ensureContentDownloaded(item) {
   const localPath = path.join(dir, filename);
   const localUrlPath = `/${isAudio ? 'audio' : 'media'}/${filename}`;
 
-  if (!fs.existsSync(localPath)) {
+  const needsDownload = !fs.existsSync(localPath) || fs.statSync(localPath).size === 0;
+  if (needsDownload) {
     try {
       const url = `${CLOUD_HTTP_BASE}/content/${item.file_path}`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
       const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length === 0) throw new Error('empty file');
       fs.writeFileSync(localPath, buf);
     } catch (err) {
-      console.warn(`[syncAgent] could not download content ${item.content_id}: ${err.message}`);
-      return; // don't point a DB row at a file that doesn't actually exist locally
+      console.warn(`[syncAgent] could not download content ${item.content_id} (${item.type}): ${err.message}`);
+      return false; // don't point a DB row at a file that doesn't actually exist locally
     }
   }
 
@@ -378,6 +448,7 @@ async function ensureContentDownloaded(item) {
     target_bus_id: item.target_bus_id ?? null,
     display_mode: item.display_mode || 'banner',
   });
+  return true;
 }
 
 // --- Push: hub -> cloud ---

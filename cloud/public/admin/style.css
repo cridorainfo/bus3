@@ -252,6 +252,12 @@ video.preview { max-height: 60px; border-radius: 8px; }
 .route-check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .route-check-row input { width: 16px; height: 16px; accent-color: var(--green); }
 
+.stop-names-editable { display: flex; flex-wrap: wrap; gap: 10px 16px; flex: 1; min-width: 200px; }
+.stop-names-editable .field { margin: 0; min-width: 140px; }
+.stop-names-editable label { font-size: 11px; color: var(--muted); }
+.stop-names-editable input { width: 100%; min-width: 120px; }
+.route-editor-toolbar { flex-wrap: wrap; gap: 10px; align-items: center; }
+
 /* --- Stop search / link picker --- */
 .stop-picker { position: relative; margin-top: 12px; }
 .search-box { position: relative; }

@@ -12,7 +12,7 @@ let lastForwardHandledAt = 0;
 // value to honor "by tier" targeting; a hardcoded null meant tier-targeted ads never matched.
 function busTier() {
   const cfg = getDeviceConfig();
-  return (cfg && cfg.tier) || null;
+  return (cfg && cfg.tier) || 'rural';
 }
 
 function getStop(routeId, direction, index) {
@@ -31,7 +31,13 @@ function composeAnnouncement(stop) {
   for (const type of types) {
     let item = null;
     if (type === 'chime' || type === 'filler' || type === 'outro') {
-      item = db.prepare('SELECT * FROM content_items WHERE type = ? LIMIT 1').get(type);
+      // Prefer cloud-synced clips over seeded *-default placeholders when both exist locally.
+      item = db.prepare(`
+        SELECT * FROM content_items
+        WHERE type = ? AND route_id IS NULL AND stop_id IS NULL
+        ORDER BY CASE WHEN content_id LIKE '%-default' THEN 1 ELSE 0 END, content_id DESC
+        LIMIT 1
+      `).get(type);
     } else if (type === 'stop_name') {
       if (stop.ads_enabled) {
         item = db.prepare('SELECT * FROM content_items WHERE type = ? AND stop_id = ? LIMIT 1').get('stop_name_ad', stop.stop_id);
@@ -103,7 +109,7 @@ function handleForward() {
 
   const stop = stops[newIndex];
   const announcement = composeAnnouncement(stop);
-  const ad = contentScheduler.selectScreenAd({ routeId: trip.route_id, tier: busTier() });
+  const ad = contentScheduler.selectScreenAd({ routeId: trip.route_id, tier: busTier(), busId: getDeviceConfig()?.bus_id });
 
   for (const seg of announcement) {
     writePlayLog({ tripId: trip.trip_id, contentId: seg.content_id, campaignId: seg.campaign_id, stopId: stop.stop_id });
@@ -152,7 +158,7 @@ function handleReplay() {
 // while the bus sits idle mid-segment.
 function idleAdTick() {
   if (!state.trip) return;
-  const ad = contentScheduler.selectScreenAd({ routeId: state.trip.route_id, tier: busTier() });
+  const ad = contentScheduler.selectScreenAd({ routeId: state.trip.route_id, tier: busTier(), busId: getDeviceConfig()?.bus_id });
   if (!ad) return;
   writePlayLog({ tripId: state.trip.trip_id, contentId: ad.content_id, campaignId: ad.campaign_id, stopId: null });
   state.update({

@@ -1,6 +1,12 @@
 const db = require('../db/db');
+const { getBusId, getDeviceConfig } = require('../config/deviceConfig');
 
 const FREQUENCY_CAP_MINUTES = Number(process.env.HUB_FREQUENCY_CAP_MINUTES || 20);
+
+function busTier() {
+  const cfg = getDeviceConfig();
+  return (cfg && cfg.tier) || 'rural';
+}
 
 // Phase 3 Pacing Engine, simplified: the cloud computes each campaign's remaining budget into a
 // rounded-down daily quota per bus and ships it down in sync_state (see hubSyncServer.js's
@@ -23,15 +29,18 @@ function hasQuotaRemaining(campaignId) {
 // Section 10's ordering: eligibility -> quota -> frequency cap -> weighted pick -> fallback.
 // Screen ads only (ad_video/ad_banner/ad_image) — announcement segments are handled separately by
 // playbackEngine's composeAnnouncement, since those are mandatory, not rotated.
-function selectScreenAd({ routeId, tier }) {
+function selectScreenAd({ routeId, tier, busId }) {
+  const resolvedBusId = busId || getBusId();
+  const resolvedTier = tier || busTier();
   const candidates = db
     .prepare(`
       SELECT * FROM content_items
       WHERE type IN ('ad_video', 'ad_banner', 'ad_image')
         AND (route_id IS NULL OR route_id = ?)
         AND (tier IS NULL OR tier = ?)
+        AND (target_bus_id IS NULL OR target_bus_id = ?)
     `)
-    .all(routeId, tier);
+    .all(routeId, resolvedTier, resolvedBusId);
 
   const eligible = candidates.filter((c) => !c.campaign_id || hasQuotaRemaining(c.campaign_id));
   if (eligible.length === 0) return selectFallback();

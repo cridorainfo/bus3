@@ -1,6 +1,6 @@
 const EventEmitter = require('events');
 const db = require('../db/db');
-const { getDeviceConfig, getRouteName } = require('../config/deviceConfig');
+const { getDeviceConfig, getRouteFields } = require('../config/deviceConfig');
 const { currentFleetSettings } = require('../config/fleetSettings');
 
 // Single in-memory live state, source of truth for what every connected phone/display sees
@@ -10,9 +10,17 @@ class HubState extends EventEmitter {
   constructor() {
     super();
     const cfg = getDeviceConfig();
+    const routeFields = cfg ? getRouteFields(cfg.route_assigned) : { name: null, name_ml: null };
     this.bus = cfg
-      ? { bus_id: cfg.bus_id, reg_number: cfg.reg_number, friendly_name: cfg.friendly_name, route_assigned: cfg.route_assigned, route_name: getRouteName(cfg.route_assigned) }
-      : { bus_id: null, reg_number: 'Not paired', friendly_name: null, route_assigned: null, route_name: null };
+      ? {
+        bus_id: cfg.bus_id,
+        reg_number: cfg.reg_number,
+        friendly_name: cfg.friendly_name,
+        route_assigned: cfg.route_assigned,
+        route_name: routeFields.name,
+        route_name_ml: routeFields.name_ml,
+      }
+      : { bus_id: null, reg_number: 'Not paired', friendly_name: null, route_assigned: null, route_name: null, route_name_ml: null };
     this.trip = null; // { trip_id, route_id, start_time, current_stop_index, started_via }
     this.esp32 = { connected: false, lastHeartbeatAt: null };
     this.muted = false;
